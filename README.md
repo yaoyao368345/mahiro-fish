@@ -292,6 +292,10 @@ mahiro-fish/
 │   ├── verify.sh
 │   ├── update.sh
 │   ├── restore.sh
+│   ├── backup-private.sh
+│   ├── restore-private.sh
+│   ├── verify-private.sh
+│   ├── lib-private.sh
 │   └── scan-secrets.sh
 ├── docs/
 └── tests/
@@ -315,17 +319,35 @@ mahiro-fish/
 - 任何真实密钥
 
 `events.jsonl` 是她的唯一可信经历，**不属于这个公开仓库**。
-真实运行数据请用独立的私有备份（加密后放到别处）：
+
+### 私有记忆备份（推荐）
+
+运行状态备份到独立的 GitHub Private 仓库：
+
+<https://github.com/yaoyao368345/mahiro-fish-private-backup>
 
 ```bash
-sudo systemctl stop dsh-web dsh-telegram
-sudo tar -C /home/fish -czf /root/mahiro-private-$(date +%F).tar.gz \
-  .dsh-fish .telegram-bridge .dsh/profiles/web/cordis.patch.yml \
-  .dsh/plugins/subscriptions/auth.json telegram-bridge
-sudo systemctl start dsh-web dsh-telegram
+cd /opt/mahiro-fish
+sudo bash scripts/backup-private.sh       # 手动备份，每次一个新 commit
+sudo bash scripts/verify-private.sh       # 校验私有属性、manifest、SHA256、seed
+sudo bash scripts/restore-private.sh --target /tmp/restore   # 隔离演练
 ```
 
-私有备份里包含密钥和隐私，**不要**上传到 GitHub。
+真正覆盖线上必须显式确认：
+
+```bash
+sudo bash scripts/restore-private.sh --apply --yes
+```
+
+脚本会先备份当前状态到 `~/.mahiro-fish-backups/pre-restore-<时间>/`，
+再停止服务、恢复文件、重启并校验 seed。
+
+备份包含事件流、日记/梦、会话、媒体索引、Telegram 去重状态和非敏感配置；
+不包含 Bot Token、API Key、ChatGPT OAuth、B 站 Cookie、真实 `.env`、
+图片/音频/视频本体。`state.json` 里的 DSH cookie 会被单独移除。
+因此恢复后需要重新填写密钥、重新登录 B 站和 ChatGPT。
+
+详细说明与限制见 [docs/private-backup.md](docs/private-backup.md)。
 
 ### 代码回滚
 
@@ -389,6 +411,7 @@ bash scripts/scan-secrets.sh
 - [语音](docs/voice.md)
 - [生图](docs/image-generation.md)
 - [开发与补丁](docs/development.md)
+- [私有记忆备份](docs/private-backup.md)
 - [安全与隐私](docs/security.md)
 
 ---

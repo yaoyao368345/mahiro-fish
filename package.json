@@ -1,6 +1,6 @@
 {
   "name": "mahiro-fish",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Reproducible open-source deployment for the Mahiro Oyama AI companion",
   "type": "module",
