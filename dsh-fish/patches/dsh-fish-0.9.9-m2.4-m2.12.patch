@@ -101,6 +101,17 @@
  function toVideo(v) {
    const stat = v.stat ?? {}
    const owner = v.owner ?? {}
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -3060,7 +3060,7 @@
+           h('div', { className: 'grid2' },
+             Toggle({ label: '允许她上网（B 站）', on: biliOn, onChange: setBiliOn,
+               hint: '关掉后她自己翻视频、看画面、发评论都用不了。' }),
+-            TimeRange({ label: '上网时间段（未成年人模式）', from: browseFrom, to: browseTo, onFrom: setBrowseFrom, onTo: setBrowseTo,
++            TimeRange({ label: '上网时间段', from: browseFrom, to: browseTo, onFrom: setBrowseFrom, onTo: setBrowseTo,
+               hint: '默认跟着「几点醒」走。她睡着的时候不会出门翻视频，醒来那一刻才现去翻（她自己临时去看不受这条限制）。' })),
+           Toggle({ label: '按时间自动替她逛一圈', on: browseOn, onChange: setBrowseOn,
+             hint: '到点自己出去走一趟：只看、只记，不叫醒她，也不会把视频标题塞进每一轮。她下次醒来只会看到一行「今天又翻到了哪几条」。' })),
 --- a/lib/drive.js
 +++ b/lib/drive.js
 @@ -30,6 +30,8 @@
@@ -597,10 +608,24 @@
  import { resumeLines } from './use.js'
  import { proactiveConfig } from './proactive.js'
  import { LOOK_BRIEF, LOOK_OFF_BRIEF, WATCH_RULE } from './browse.js'
-@@ -261,6 +261,7 @@
+@@ -259,8 +259,19 @@
+   // P3（2026-11-07）：关掉的时候这两节不再整段消失——门要在，门上挂一句「这会儿」。
+   // 关掉只改「这句话是什么」，不改「这一节在不在」；否则她会以为这件事根本不存在。
    body.push('## 上网')
-   if (browse) body.push(LOOK_BRIEF, '', WATCH_RULE, '')
-   else body.push(LOOK_OFF_BRIEF, '')
+-  if (browse) body.push(LOOK_BRIEF, '', WATCH_RULE, '')
+-  else body.push(LOOK_OFF_BRIEF, '')
++  if (browse) {
++    // 2026-11-14：评论关着的时候不能再写「在那条下面说」——她做不到，
++    // 那句会变成一条空承诺。只替换这一行，其余 WATCH_RULE 原样保留；
++    // 开着评论时按原样说（她确实能发）。
++    const watchRule = speak
++      ? WATCH_RULE
++      : WATCH_RULE.replace(
++        '看了之后想说什么，就在那一条下面说——不用等平台把它推到我面前。',
++        '看了之后想说什么，这会儿也说不出去——先记在心里。',
++      )
++    body.push(LOOK_BRIEF, '', watchRule, '')
++  } else body.push(LOOK_OFF_BRIEF, '')
 +  body.push(MEDIA_BRIEF, '')
    body.push('## 在网上说话')
    if (speak) body.push(SPEAK_BRIEF, '')

@@ -14,7 +14,7 @@
 dsh-fish/
 ├── patches/
 │   ├── dsh-fish-0.9.9-m2.4-m2.12.patch   # 累积补丁
-│   ├── CHECKSUMS.sha256                  # 补丁后 19 个文件的哈希
+│   ├── CHECKSUMS.sha256                  # 补丁后 20 个文件的哈希
 │   ├── apply.sh                          # 原始应用脚本
 │   └── restore.sh                        # 恢复 0.9.9 原始 lib
 └── modules/                              # 新增模块源码（参考）
@@ -101,10 +101,20 @@ sha256sum lib/bili.js lib/draw.js ... > CHECKSUMS.sha256
 如果上游升级：
 
 - 不要强行 `patch`；
-- 先看上游 `lib/` 是否改了补丁涉及的 19 个文件；
+- 先看上游 `lib/` 是否改了补丁涉及的 20 个文件；
 - 重新基于新版本生成补丁；
 - 更新 `package.json` 里的固定版本、`README`、`CHECKSUMS`；
 - 在干净环境完整回归。
+
+## 人格导入与默认规则
+
+现行实例通过 `scripts/import-persona.mjs` 导入人格。导入后
+`model.persona.imported === true`，`lib/selfdoc.js` 里 `bansMuted` 为真，
+`lib/persona.js:366` 的两条默认提示词禁令（关系数值化、撒娇式表达）**不进入
+system prompt**；它们只对没有导入人格的默认实例生效。
+
+所以本项目不修改上游 `lib/rules.js`：改它对现行实例没有作用，只会增加补丁面。
+如果以后部署一个“从默认起点养起”的实例，再重新评估这两条规则。
 
 ## 测试
 

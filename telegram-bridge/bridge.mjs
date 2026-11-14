@@ -71,7 +71,7 @@ const DEFAULTS = {
   // Bring your own voice. A cloned personal voice ID is a credential:
   // keep it in .telegram-bridge.env (0600) and never commit it.
   BREEZE_TTS_VOICE: '',
-  BREEZE_TTS_INSTRUCTIONS: '用自然、清楚、稍微轻快的年轻女性语气说普通话，句尾自然上扬，不要过度卖萌。',
+  BREEZE_TTS_INSTRUCTIONS: '用自然、清楚、稍微轻快的年轻女性语气说普通话，句尾自然上扬，语气跟着当时的语境走。',
   BREEZE_TTS_SPEED: '1.03',
   BREEZE_TTS_GUIDANCE: '2.0',
   BREEZE_TTS_TIMEOUT_MS: '60000',

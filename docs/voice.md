@@ -132,7 +132,7 @@ BREEZE_TTS_MODEL=breeze-tts-2
 BREEZE_TTS_VOICE=voc_你的音色ID
 BREEZE_TTS_SPEED=1.03
 BREEZE_TTS_GUIDANCE=2.0
-BREEZE_TTS_INSTRUCTIONS=用自然、清楚、稍微轻快的年轻女性语气说普通话。
+BREEZE_TTS_INSTRUCTIONS=用自然、清楚、稍微轻快的年轻女性语气说普通话，语气跟着当时的语境走。
 ```
 
 仓库里的 `BREEZE_TTS_VOICE` 故意留空；不要把自己的音色 ID 写进公开文件。

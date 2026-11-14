@@ -30,9 +30,9 @@
     "idleCountsSeen": false
   },
   "avoid": {
-    "keywords": ["恐怖", "血腥", "鬼畜", "政治"],
+    "keywords": ["恐怖", "血腥", "政治"],
     "upMids": [],
-    "minDuration": 60
+    "minDuration": 0
   },
   "browse": {
     "enabled": true,

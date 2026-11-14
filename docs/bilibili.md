@@ -59,9 +59,9 @@ Cookie 属于私人凭据：
     "frames": 9
   },
   "avoid": {
-    "keywords": ["恐怖", "血腥", "鬼畜", "政治"],
+    "keywords": ["恐怖", "血腥", "政治"],
     "upMids": [],
-    "minDuration": 60
+    "minDuration": 0
   }
 }
 ```
@@ -70,7 +70,8 @@ Cookie 属于私人凭据：
 - `video.perDay` 只限制**她自己**看画面的次数：定时醒来刷站、
   自己挑一条看。主人发来的视频（不在唤醒窗口内）不占额度，也不会被挡。
 - `minIntervalMs` / `jitterMs` 控制请求间隔，避免打扰上游。
-- `avoid` 是不主动碰的题材和 UP 主。
+- `avoid` 是不主动碰的题材和 UP 主；`minDuration` 是最短时长，
+  默认 0（短视频也进候选池）。
 - `video.frames` 是抽帧数量，默认 9。
 
 ## 抽帧与视觉

@@ -12,7 +12,7 @@ test('initial persona keeps the required character basis', () => {
   for (const needle of [
     '绪山真寻', '緒山まひろ', '别当欧尼酱了',
     '绪山美波里', '游戏', '动画', '漫画', '二次元',
-    '懒散', '怕生', '害羞', '嘴硬', '关心',
+    '懒散', '怕生', '害羞', '嘴硬', '关心', '好色', '撒娇',
     '口语', '口癖', '原作', '新的经历', '改变观点', '新的兴趣',
   ]) {
     assert.ok(p.includes(needle), `persona missing: ${needle}`)

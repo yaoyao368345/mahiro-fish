@@ -7,6 +7,17 @@
   - `watched:` 事件里 `"self": true` 表示她自己发起；老记录没有这个字段，
     一律按主人点名的处理。
   - `watchedToday()` 只数带 `self` 标记的当天记录。
+- 人格微调（`persona/mahiro-handover.md`）：补上“有点好色”这一面；说话方式允许
+  自然地撒娇、卖萌和嘴硬着要关心，仍不写成刻板动漫角色。同步 README、
+  persona 说明和静态测试。重新导入后旧状态归档。
+- 评论关着时不再告诉她“在那条下面说”：`lib/selfdoc.js` 按 `speak` 开关
+  选用对应文案；评论能力本身仍关闭。
+- 设置页标签“上网时间段（未成年人模式）”改为“上网时间段”。
+- TTS 指令去掉“不要过度卖萌”，保留自然、贴合语气的描述。
+- `avoid.keywords` 移除“鬼畜”，`avoid.minDuration` 改为 0：
+  短视频重新进入自主浏览的候选池。
+- 默认提示词禁令（`lib/rules.js`）不改：导入人格时 `bansMuted` 为真，
+  它们本来就不进 system prompt；原因记在 `docs/development.md`。
 
 ## 0.1.0 — 2026-11-14
 
