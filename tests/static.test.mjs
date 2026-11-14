@@ -35,6 +35,18 @@ test('patch is pinned to dsh-fish 0.9.9 and adds the expected modules', () => {
   }
 })
 
+test('watch quota applies only to her own picks, not owner-shared videos', () => {
+  const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
+  const start = patch.indexOf('--- a/lib/watch.js')
+  const end = patch.indexOf('--- /dev/null')
+  assert.ok(start > 0 && end > start, 'watch.js hunk missing')
+  const watch = patch.slice(start, end)
+  assert.ok(watch.includes("import { inWake } from './wakewin.js'"))
+  assert.ok(watch.includes('const selfWatch = inWake()'))
+  assert.ok(watch.includes('if (selfWatch && used >= cap)'))
+  assert.ok(watch.includes('...(selfWatch ? { self: true } : {})'))
+})
+
 test('systemd templates do not hardcode a real user or host', () => {
   for (const unit of ['config/systemd/dsh-web.service.template', 'config/systemd/dsh-telegram.service.template']) {
     const s = read(unit)

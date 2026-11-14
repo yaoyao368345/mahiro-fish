@@ -628,7 +628,7 @@
    cfg.notify = { ...DEFAULTS.notify, ...cfg.notify }
 --- a/lib/watch.js
 +++ b/lib/watch.js
-@@ -9,6 +9,7 @@
+@@ -9,16 +9,36 @@
  import { readEvents, appendEvent, rootDir } from './store.js'
  import { loadConfig, dateKey, biliOn } from './settings.js'
  import { grabFrames } from './video.js'
@@ -636,7 +636,38 @@
  import { logLine } from './log.js'
  
  import { defineTool } from './tool.js'
-@@ -114,6 +115,29 @@
+ import { slashed } from './posix.js'
+ import { guardWrite } from './tenant.js'
++import { inWake } from './wakewin.js'
+ 
+-/** 今天已经看过几条（只数成功的，失败不占额度） */
++/**
++ * 今天**她自己**看过几条画面（只数成功的、她自己发起的）。
++ *
++ * 2026-11-14（主人反馈）：额度管的是「她自己刷」这件事，不是「她能不能看」。
++ * 他发来的视频不管今天第几条都得给她看，也不该占掉她明天/今天自己那份。
++ * 所以只有唤醒窗口内（定时刷站、她自己醒着挑的）那几条记 `self:true`，这里只数这些；
++ * 老记录没有这个字段，一律按「他点名的」处理，不占额度。
++ */
+ export function watchedToday(events, dk) {
+   const key = `watched:${dk}`
+-  return (events ?? []).filter((e) => e?.type === 'meta' && String(e.text ?? '').startsWith(key)).length
++  let n = 0
++  for (const e of events ?? []) {
++    if (e?.type !== 'meta') continue
++    const t = String(e.text ?? '')
++    if (!t.startsWith(key)) continue
++    const i = t.indexOf('{')
++    if (i < 0) continue // 0.9.9 早期的 watched: 行没有 JSON，没法认发起方
++    try {
++      if (JSON.parse(t.slice(i))?.self === true) n += 1
++    } catch { /* 坏行不算，别让一条旧记录挡死额度 */ }
++  }
++  return n
+ }
+ 
+ /** 没有 tenancy（单测、老调用）时自己拼一个，理由同 look.js 的 tenancyOf。 */
+@@ -114,12 +134,38 @@
            return { ok: false, path: '', text: '', note: '这不是一个视频号。' }
          }
  
@@ -666,7 +697,18 @@
          const ev = await readEvents(root).catch(() => ({ events: [] }))
          const dk = dateKey()
          const cap = Math.max(0, Number(config?.video?.perDay ?? 2))
-@@ -145,7 +169,7 @@
+-        const used = watchedToday(ev.events, dk)
++        // 额度只约束她自己（唤醒窗口内的定时刷站 / 自己挑的那条）。
++        // 他在对话里发来的视频不在唤醒窗口内，不占额度、也不该被挡。
++        const selfWatch = inWake()
++        const used = selfWatch ? watchedToday(ev.events, dk) : 0
+         // 额度用完只说"不想看了"，不报数字——她不该知道有个计数器在管她（N2）
+-        if (used >= cap) {
++        if (selfWatch && used >= cap) {
+           // 日志里可以写数字：这是给人看的，不是给她看的。
+           logLine('info', ['看画面：今日额度已满', `${used}/${cap}`, bvid], root)
+           return { ok: false, path: '', text: '', note: '今天不想再看画面了。' }
+@@ -145,7 +191,7 @@
            return { ok: false, path: '', text: '', note: r.why }
          }
  
@@ -675,7 +717,16 @@
            {
              type: 'meta',
              ...(who.sessionId ? { sessionId: who.sessionId } : {}),
-@@ -163,7 +187,22 @@
+@@ -155,6 +201,8 @@
+             // 把展示信息跟着凭证一起落下来，报告就不必二次取数、也不必猜。
+             // 老事件没有这段 JSON，读的一方必须两种形状都认（whatseen.js）。
+             text: `watched:${dk} ${bvid} ${JSON.stringify({
++              // 只有她自己发起的才算额度；他点名的记下来但不带这个标记。
++              ...(selfWatch ? { self: true } : {}),
+               title: String(r.title ?? '').slice(0, 120),
+               up: String(r.up ?? '').slice(0, 60),
+               duration: Number(r.duration) || 0,
+@@ -163,14 +211,29 @@
            },
            { source: 'system' },
            root,
@@ -699,6 +750,14 @@
  
          // 路径一律给正斜杠：宿主渲染 markdown 图片时会拿路径拼 /api/file，
          // C:\... 这种反斜杠写法在客户端解析后取不到文件，图片就显示成「无法预览」
+         // （2026-10-26 实测：同一张图 C:\ 版失败、C:/ 版正常）。
+         const posix = slashed(r.path)
+         // 成功的这一条也要记：跟日志里「今日额度已满」对得上，才知道额度是怎么用掉的。
+-        logLine('info', ['看画面：取到了', bvid, `${used + 1}/${cap}`, posix], root)
++        logLine('info', ['看画面：取到了', bvid, selfWatch ? `${used + 1}/${cap}` : '他发来的，不占额度', posix], root)
+         return {
+           ok: true,
+           path: posix,
 --- /dev/null
 +++ b/lib/draw.js
 @@ -0,0 +1,179 @@
