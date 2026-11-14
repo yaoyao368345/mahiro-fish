@@ -26,7 +26,7 @@
   - `persona.js`：Telegram 语音回复能力说明
   - `restrict.js`：工具面加入 `her_voice`
 
-补丁后的 21 个文件校验和见 `CHECKSUMS.sha256`。
+补丁后的 23 个文件校验和见 `CHECKSUMS.sha256`。
 
 ## 应用
 

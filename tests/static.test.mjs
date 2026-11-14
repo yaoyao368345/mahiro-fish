@@ -30,7 +30,7 @@ test('public env template contains only placeholders', () => {
 test('patch is pinned to dsh-fish 0.9.9 and adds the expected modules', () => {
   const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
   assert.ok(patch.includes('--- a/lib/proactive.js'))
-  for (const mod of ['draw.js', 'selfavatar.js', 'mediaindex.js', 'mediarecall.js', 'sub.js', 'voice.js']) {
+  for (const mod of ['draw.js', 'selfavatar.js', 'life.js', 'mediaindex.js', 'mediarecall.js', 'sub.js', 'voice.js']) {
     assert.ok(patch.includes(`+++ b/lib/${mod}`), `patch missing ${mod}`)
   }
 })
@@ -45,6 +45,27 @@ test('watch quota applies only to her own picks, not owner-shared videos', () =>
   assert.ok(watch.includes('const selfWatch = inWake()'))
   assert.ok(watch.includes('if (selfWatch && used >= cap)'))
   assert.ok(watch.includes('...(selfWatch ? { self: true } : {})'))
+})
+
+test('chat prompt trims host agent sections and adds a light life context', () => {
+  const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
+  for (const needle of [
+    '+++ b/lib/identity.js',
+    '+++ b/lib/life.js',
+    'HOST_SECTIONS_DROP',
+    'app:web-surface',
+    'ui:deliverable-file-references',
+    'fish:life',
+    '他在跟你说话。想怎么接就怎么接',
+  ]) {
+    assert.ok(patch.includes(needle), `patch missing: ${needle}`)
+  }
+  const life = read('dsh-fish/modules/life.js')
+  assert.ok(life.includes('recentBili'))
+  assert.ok(life.includes('browsed'))
+  const persona = read('persona/mahiro-handover.md')
+  assert.ok(persona.includes('碰到自己感兴趣的事'))
+  assert.ok(persona.includes('可以在合适的时候带出来'))
 })
 
 test('her_draw can set her own avatar once a day', () => {

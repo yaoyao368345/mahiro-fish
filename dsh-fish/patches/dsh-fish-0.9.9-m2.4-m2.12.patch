@@ -150,6 +150,181 @@
  }
  
  /** 一次行动的代价（动完扣掉）。留给记账用，纯数值。 */
+--- a/lib/identity.js
++++ b/lib/identity.js
+@@ -59,6 +59,20 @@
+ export const WAKE_ORDER = 8700
+ 
+ /**
++ * 「最近」段（2026-11-14，M3.1）。
++ *
++ * 普通聊天轮里她看不到自己今天翻过/看过什么（`say.js` 刻意不塞素材），
++ * 于是生活经历进不了对话。这一段只做一件事：把**真实发生过**的近期经历
++ * 压缩成 1–3 行背景，放在 system prompt 里；不是任务，不要求她提。
++ *
++ * 和 wake 一样按会话分开存：进程里可能同时住着几条会话，不能串。
++ * TTL 比 wake 长一些：它要覆盖一次可能带工具的回合；下一轮会覆盖。
++ */
++export const LIFE_SECTION = 'fish:life'
++export const LIFE_ORDER = 8550
++const LIFE_TTL_MS = 15 * 60_000
++
++/**
+  * 「这一刻会变的那几段」段（0.8.10，用户 m00315）。
+  *
+  * 她自己的身份文档里，有四段是逐轮、逐天都在变的：她自己说过的话、读到的一句话、
+@@ -150,7 +164,39 @@
+   if (key === loggedTrimKey) return
+   loggedTrimKey = key
+   const names = dropped.map((d) => d.name).join('、')
+-  log(`[dsh-fish] 摘掉了 ${dropped.length} 段讲别的工具的提示词（省 ${saved} 字符）：${names}`)
++  log(`[dsh-fish] 摘掉了 ${dropped.length} 段无关提示词（省 ${saved} 字符）：${names}`)
++}
++
++/**
++ * 宿主的通用 Agent / 开发环境说明：和她 Telegram 私聊无关，整段摘掉。
++ *
++ * 这些段名来自宿主自己的 system-prompt 注册（不是猜的关键词）：
++ *   harness:identity                "You are an AI agent…"
++ *   harness:source                  开发 checkout / pwd
++ *   app:web-surface                 Web GUI / Vite / HMR
++ *   ui:deliverable-file-references  "Use present… image cards"
++ *   plan:policy / team:policy       计划模式与 Agent Teams
++ *   mcp:servers / tools:sdk         MCP 与 SDK 工具
++ *
++ * 运行时上下文（cwd、沙箱、审批策略）不在这里：那是 systemPrompt.context，
++ * 不是 section；本函数只动 sections。
++ */
++export const HOST_SECTIONS_DROP = Object.freeze([
++  'harness:identity',
++  'harness:source',
++  'app:web-surface',
++  'ui:deliverable-file-references',
++  'plan:policy',
++  'team:policy',
++  'mcp:servers',
++  'tools:sdk',
++])
++const DROP_SECTION_SET = new Set(HOST_SECTIONS_DROP)
++
++/** `tool:bash` → `bash`；`tool:read-image` → `read_image`。 */
++export function sectionToolName(name) {
++  const n = String(name ?? '')
++  return n.startsWith('tool:') ? n.slice(5).replace(/-/g, '_') : ''
+ }
+ 
+ /** 从一段文字里挑出「像工具名」的词（去重）。 */
+@@ -182,16 +228,31 @@
+       .map((t) => String(typeof t === 'string' ? t : t?.name ?? ''))
+       .filter(Boolean),
+   )
+-  if (have.size === 0) {
+-    lastTrim = { dropped: [], saved: 0 }
+-    return assembly
+-  }
++  const hasToolList = have.size > 0
+   const dropped = []
+   let saved = 0
+   const kept = assembly.sections.filter((s) => {
+     const name = String(s?.name ?? '')
+     if (name.startsWith('fish:')) return true
+     const text = typeof s?.text === 'string' ? s.text : ''
++    // 1) 明确与私聊无关的宿主段：按段名摘，不靠正文关键词。
++    if (DROP_SECTION_SET.has(name)) {
++      dropped.push({ name, chars: text.length })
++      saved += text.length
++      return false
++    }
++    // 2) 工具说明按段名 + 这一轮真实工具表判断：`tool:bash` 的 `bash`
++    //    不在她手上就整段摘掉；`tool:read-image` 的 `read_image` 在就保留。
++    //    没有工具表时先不动这一类，宁可多留。
++    const toolName = sectionToolName(name)
++    if (toolName) {
++      if (!hasToolList || have.has(toolName)) return true
++      dropped.push({ name, chars: text.length })
++      saved += text.length
++      return false
++    }
++    // 3) 老兜底：不是 tool: 段、但正文像工具说明的，仍按正文判断。
++    if (!hasToolList) return true
+     if (text.length < TOOL_DOC_MIN_CHARS) return true
+     const mentioned = toolNamesIn(text)
+     if (mentioned.length < TOOL_DOC_MIN_NAMES) return true
+@@ -241,7 +302,13 @@
+ export function reorderForHer(assembly, { log } = {}) {
+   if (!assembly || !Array.isArray(assembly.sections)) return assembly
+   trimToolDocs(assembly, { log })
+-  const kept = assembly.sections.filter((s) => String(s?.name ?? '') !== HOST_PERSONA_SECTION)
++  // harness:identity 也只有一句 "You are an AI agent…"；她的身份段本来就排在
++  // 它后面，摘掉之后 fish:identity 直接成为第一段。persona-prefix 是部署层的
++  // coding-agent 空话，同样摘掉。
++  const kept = assembly.sections.filter((s) => {
++    const n = String(s?.name ?? '')
++    return n !== HOST_PERSONA_SECTION && n !== HOST_HARNESS_SECTION
++  })
+   const mine = kept.find((s) => String(s?.name ?? '') === IDENTITY_SECTION)
+   if (!mine) {
+     // 没找到她的段（宿主换名字/还没挂上）：只做摘掉那一步，别乱动顺序。
+@@ -303,6 +370,7 @@
+  * 「她突然不说话了，连着好几轮」。
+  */
+ const wakeBySession = new Map()
++const lifeBySession = new Map()
+ 
+ /**
+  * 处境段代次（2026-11-04，用户 m01466）。
+@@ -390,6 +458,37 @@
+   dropWake('')
+ }
+ 
++/** 设这一轮聊天要用的「最近」背景。传空串等于清掉。 */
++export function setLifeSection(text, sessionId = '') {
++  const key = wakeKey(sessionId)
++  const old = lifeBySession.get(key)
++  if (old?.timer) clearTimeout(old.timer)
++  const body = String(text ?? '').trim()
++  if (!body) {
++    lifeBySession.delete(key)
++    return
++  }
++  const rec = { text: body, timer: null }
++  rec.timer = setTimeout(() => {
++    if (lifeBySession.get(key) === rec) lifeBySession.delete(key)
++  }, LIFE_TTL_MS)
++  rec.timer.unref?.()
++  lifeBySession.set(key, rec)
++}
++
++/** 取这一条会话的「最近」背景；没有就空串。 */
++export function getLifeSection(sessionId = '') {
++  return lifeBySession.get(wakeKey(sessionId))?.text ?? ''
++}
++
++/** 一轮结束后收掉。传空/不传都安全。 */
++export function clearLifeSection(sessionId = '') {
++  const key = wakeKey(sessionId)
++  const rec = lifeBySession.get(key)
++  if (rec?.timer) clearTimeout(rec.timer)
++  lifeBySession.delete(key)
++}
++
+ /**
+  * 看现在挂着什么。测试里不带会话就是「现在挂着的那一份」。
+  * 带了会话而键对不上（宿主换了 id 写法）时，只有一份才兜底返回，
+@@ -571,6 +670,13 @@
+       // （0.9.9，issue #127）。
+       text: () => pronounize(getWakeSection(wakeSid), pronounFor(root)),
+     }))
++    // 「最近」背景：普通聊天轮由 say.js 在投递前写好、回合结束清掉。
++    // 它只增加生活背景，不要求她提；没有内容时是空串，等于不存在。
++    remember(agent, 'section', sp.section({
++      name: LIFE_SECTION,
++      order: LIFE_ORDER,
++      text: () => pronounize(getLifeSection(wakeSid), pronounFor(root)),
++    }))
+     // 「手边有什么」单独一段（2026-10-29，用户 m01276）。
+     // 有些工具我们收不窄——注册在 agent 自己作用域里的（ops_*、Agent Teams）
+     // 照样会出现在她的工具表里，schema 有名字她就会当成「我能用」。
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -21,6 +21,11 @@
@@ -272,7 +447,27 @@
        // 一律 200：请求本身是合法的，被拦下是**规则的结果**，不是接口出错。
 --- a/lib/persona.js
 +++ b/lib/persona.js
-@@ -590,6 +590,9 @@
+@@ -295,6 +295,19 @@
+   // ---- 核心段（永远保留）----
+   push(seedSection(model), true)
+ 
++  // M3.1（2026-11-14）：导入的 seed 不能改（事件流只追加），但审计指出
++  // 「通常不长篇大论」「不必每次都主动找话题」会把表达压得太收。这里只在
++  // 旧 seed 仍然带着这两句时补一段**许可**：感兴趣可以多说，有想法可以带出来。
++  // 不是 KPI，不规定频率；新的 seed 已经写进去时不再重复。
++  const seedText = String(model?.seed ?? '')
++  if (!/碰到自己感兴趣的事/.test(seedText) && /通常不长篇大论|不必每次都主动找话题/.test(seedText)) {
++    push([
++      '## 说话',
++      '你平时话不多；碰到自己感兴趣的事，可以自然多说几句，不用每句都收着。',
++      '你不必每次都主动找话题；但你自己有想法、发现或经历时，可以在合适的时候带出来，不必一直等别人问。',
++    ].join('\n'), true)
++  }
++
+   // 只写事实。原来这里还有一句心理旁白（"你在弄清楚这是不是个安全的地方"），
+   // 那是把想法塞进她脑子里——每天塞一遍，她就真的只会那么想。
+   const now = ['## 现在', `你存在了 ${model.day} 天。`]
+@@ -590,6 +603,9 @@
      // 2026-11-09（用户 m00002）：能力地图第二层补到 bili_watch 自己身上。
      // 原来只写「给它一个视频号」，那是动作不是处境——她得先知道什么时候会想到看画面。
      '另有一个 bili_watch：翻到一条、光看标题和简介还是想知道画面里到底是什么的时候，给它一个视频号，它会把那几帧截下来给你看。',
@@ -282,7 +477,7 @@
      '看了就是看了，没看懂就说没看懂。',
      // 2026-10-29（用户 m01581，真机）：原来是「上面这几样是你自己的屋子里的东西」。
      // 这份文档会被出门那条会话原样带走，而那句话把工具和屋子黏在了一起——她据此
-@@ -723,6 +726,17 @@
+@@ -723,6 +739,17 @@
   */
  export function proactiveBrief(sendTools = []) {
    if (!sendTools.length) return PROACTIVE_BRIEF
@@ -300,7 +495,7 @@
    const say = PROACTIVE_BRIEF.split('\n').map((line) => (line.startsWith('her_say 只把这句话记进你自己的流水')
      ? `自己想开口（没人找你）的时候用 ${sendTools.join('、')}，不用等他先问；那种时候写下的正文只留在这条会话里，发不到聊天里。`
      : line))
-@@ -815,6 +829,19 @@
+@@ -815,6 +842,19 @@
  ].join('\n')
  
  /**
@@ -492,7 +687,16 @@
  import { bumpTurns, rotateTalkSession, talkSessionId, homeStatus } from './home.js'
  import { addExchange } from './talkmem.js'
  import { hearTurn, rememberGroupWord } from './hear.js'
-@@ -292,6 +293,15 @@
+@@ -44,6 +45,8 @@
+ import { classifyReaction } from './refuse.js'
+ import { lengthBudget } from './budget.js'
+ import { redactOwner } from './redact.js'
++import { lifeContext } from './life.js'
++import { setLifeSection, clearLifeSection } from './identity.js'
+ 
+ // 等她说完最多等这么久。一次回话通常 8–30 秒；75 秒还没结束就先把
+ // 已落盘的交出去（她可能在调工具，也可能卡住了），不让人干等到超时。
+@@ -292,6 +295,15 @@
          : []),
      heard,
      '',
@@ -508,7 +712,34 @@
      ...(imagePath
        ? [
          `${foreign ? '有人发' : '他发'}了张图，在这儿：${imagePath}`,
-@@ -468,6 +478,10 @@
+@@ -304,10 +316,10 @@
+     ...(watchText ? [watchText, ''] : []),
+     ...(lengthBudget(config?.chat?.replyChars) ? [`（${lengthBudget(config?.chat?.replyChars)}）`, ''] : []),
+     isGroup
+-      ? '回一句给群里。回完了，如果这一轮里有什么是你自己想留下的，再用 growth_commit 记下来——不回也不记，也可以。'
++      ? '回一句给群里。想怎么接就怎么接，不用把这一轮当成任务。'
+       : guest
+-        ? '回一句给这个人。回完了，如果这一轮里有什么是你自己想留下的，再用 growth_commit 记下来——不回也不记，也可以。'
+-        : '先把话回给他。回完了，如果这一轮里有什么是你自己想留下的，再用 growth_commit 记下来——不回也不记，也可以。',
++        ? '回一句给这个人。想怎么接就怎么接，不用把这一轮当成任务。'
++        : '他在跟你说话。想怎么接就怎么接——直接回答、吐槽、说点自己的事都行，不想多说也可以。这一轮不用特意留下什么记录。',
+   ]
+   const content = ['## 这次', '', ...parts].join('\n')
+ 
+@@ -418,6 +430,12 @@
+     await reviveIfBlank(sc, sessionId, herDir, (msg) => log?.(`say: ${msg}`)).catch(() => {})
+   }
+ 
++  // M3.1：普通聊天的「最近」背景。只给家里私聊；群聊/外客不带。
++  // 它进 system prompt（fish:life），不进对话历史；没有内容时等于不存在。
++  if (atHome && !foreign) {
++    setLifeSection(lifeContext(events, { now: Date.now() }), sessionId)
++  }
++
+   const ac = new AbortController()
+   const kill = setTimeout(() => ac.abort(), REPLY_WAIT_MS + 15_000)
+   kill.unref?.()
+@@ -468,6 +486,10 @@
  
      const turn = await turnWait.wait()
  
@@ -519,7 +750,7 @@
      // 她这一轮新写的话（可能一句都没有——允许她不回）
      const after = await readEvents(root)
      const fresh = newHerEventsSince(after.events, sinceId)
-@@ -589,6 +603,7 @@
+@@ -589,6 +611,7 @@
        note,
        said,
        herReply,
@@ -527,7 +758,7 @@
        waitedMs: Date.now() - t0,
        rotated,
        // 这句话进了哪间房（2026-11-03）：观测台与桥要能核对"落到哪儿了"。
-@@ -600,7 +615,7 @@
+@@ -600,11 +623,13 @@
      }
    } catch (err) {
      log('say failed', err?.message ?? err)
@@ -536,6 +767,12 @@
    } finally {
      clearTimeout(kill)
      // 投递跟等待都结束了：监听与定时器一起收，别把 off 挂在宿主的
+     // 事件总线上（一局里失败几次就漏几个）。
+     turnWait.cancel()
++    // 这一轮的「最近」背景只属于这一轮；下一轮会按当时的事件重算。
++    clearLifeSection(sessionId)
+   }
+ }
 --- a/lib/scheduler.js
 +++ b/lib/scheduler.js
 @@ -38,7 +38,7 @@
@@ -1001,6 +1238,82 @@
 +    return { root, herDir: String(tenancy.herDir ?? ''), tenant: tenancy.tenant ?? { ok: true } }
 +  }
 +  return { root, herDir: '', tenant: { ok: true } }
++}
+--- /dev/null
++++ b/lib/life.js
+@@ -0,0 +1,73 @@
++/**
++ * life.js —— 普通聊天轮的「最近」背景（2026-11-14，M3.1）
++ *
++ * 只做一件事：把**真的发生过**的近期经历压成 1–3 行，交给 say.js 挂进
++ * system prompt 的 fish:life 段。不是任务清单，不要求她提，也不替她编。
++ *
++ * 三条边界：
++ *   1. 只读事件流里已有的记录；没有就返回空串，整段不出现。
++ *   2. `browsed:` 只代表「翻到过标题」，不算看过；这里只用 `watched:` /
++ *      `looked:`（recentBili 已经是这个口径）。安静浏览不会进来。
++ *   3. 不额外调用模型，不做总结；标题原样保留。
++ */
++
++import { recentBili } from './proactive.js'
++import { interestOf } from './interest.js'
++
++const DAY = 86_400_000
++const MAX_LINES = 3
++
++function tsOf(e) {
++  const raw = e?.ts ?? e?.time ?? e?.at
++  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? raw : 0
++  const d = Date.parse(String(raw ?? ''))
++  return Number.isFinite(d) ? d : 0
++}
++
++function recentMeta(events, prefix, since) {
++  let n = 0
++  for (const e of events ?? []) {
++    if (e?.type !== 'meta') continue
++    if (!String(e.text ?? '').startsWith(prefix)) continue
++    const ts = tsOf(e)
++    if (ts && ts >= since) n += 1
++  }
++  return n
++}
++
++/**
++ * 生成一段简短的「最近」背景；没有内容就返回空串。
++ * @param {object[]} events
++ * @param {{now?:number, days?:number}} [o]
++ * @returns {string}
++ */
++export function lifeContext(events = [], { now = Date.now(), days = 3 } = {}) {
++  const since = now - Math.max(1, Number(days) || 3) * DAY
++  const lines = []
++
++  // 她真实看过/读过的 B 站条目：recentBili 已排除 browsed，且 watched 优先。
++  for (const item of recentBili(events, { now, days, limit: 2 })) {
++    const text = String(item?.text ?? '').trim()
++    if (text) lines.push(text)
++  }
++
++  // 画图 / 头像：只报事实，不描述内容（事件里没有画面描述）。
++  const draws = recentMeta(events, 'draw:', since)
++  const avatars = recentMeta(events, 'avatar:', since)
++  if (avatars > 0 && draws > 0) lines.push(`最近画过 ${draws} 张图，也把一张设成了头像。`)
++  else if (avatars > 0) lines.push('最近把一张自己画的图设成了头像。')
++  else if (draws > 0) lines.push(`最近画过 ${draws} 张图。`)
++
++  // 反复出现的事（interest）：只给一个标签，不替她总结。
++  const interest = interestOf(events, now)
++  const label = String(interest?.[0]?.text ?? '').trim()
++  if (label) lines.push(`最近你常想到：${label}。`)
++
++  const unique = [...new Set(lines)].slice(0, MAX_LINES)
++  if (!unique.length) return ''
++  return [
++    '## 最近',
++    '（这些是你自己最近做过的事，不是任务；想提就提，不想提也不用提。细节记不清就说记不清，别补。）',
++    ...unique.map((l) => `- ${l}`),
++  ].join('\n')
 +}
 --- /dev/null
 +++ b/lib/mediaindex.js

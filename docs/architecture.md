@@ -59,6 +59,16 @@
    通过 `sendPhoto` 发给主人；目录外路径直接拒绝。
 6. 图片 30 天 / 100MB 清理；事件流不修改。
 
+## 普通聊天的上下文
+
+1. `say.js` 先按事件流算一段 `fish:life`：只取近 3 天真实的
+   `watched:` / `looked:`、画图和头像记录，最多 3 行；`browsed:` 不算看过。
+2. 这段进 system prompt，不进对话历史；没有内容就不出现，也不要求她提。
+3. `identity.js` 的 `system-prompt/assemble` 钩子按段名摘掉与私聊无关的宿主段
+   （bash、workflow、subagent、present、Web GUI、checkout），按真实工具表保留
+   `tool:read-image` 之类她确实有的说明；运行时上下文和权限约束不动。
+4. 每轮用户消息只保留一句“想怎么接就怎么接”，不再写成回复任务。
+
 ## 自选头像
 
 1. 她调用 `her_avatar(path?)`（不给就用最近那张），或 `her_draw(prompt, asAvatar: true)`。

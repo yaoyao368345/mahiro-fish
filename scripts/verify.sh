@@ -31,7 +31,7 @@ if (cd "$FISH_PKG" 2>/dev/null && sha256sum -c "${REPO_DIR}/dsh-fish/patches/CHE
 else
   fail "dsh-fish 补丁未应用或文件被改动"
 fi
-for f in draw.js mediaindex.js mediarecall.js sub.js voice.js; do
+for f in draw.js selfavatar.js life.js mediaindex.js mediarecall.js sub.js voice.js; do
   check "[ -f ${FISH_PKG}/lib/${f} ]" "新增模块 lib/${f}"
 done
 

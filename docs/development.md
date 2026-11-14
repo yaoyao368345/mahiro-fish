@@ -14,12 +14,13 @@
 dsh-fish/
 ├── patches/
 │   ├── dsh-fish-0.9.9-m2.4-m2.12.patch   # 累积补丁
-│   ├── CHECKSUMS.sha256                  # 补丁后 21 个文件的哈希
+│   ├── CHECKSUMS.sha256                  # 补丁后 23 个文件的哈希
 │   ├── apply.sh                          # 原始应用脚本
 │   └── restore.sh                        # 恢复 0.9.9 原始 lib
 └── modules/                              # 新增模块源码（参考）
     ├── draw.js
     ├── selfavatar.js
+    ├── life.js
     ├── mediaindex.js
     ├── mediarecall.js
     ├── sub.js
@@ -102,7 +103,7 @@ sha256sum lib/bili.js lib/draw.js ... > CHECKSUMS.sha256
 如果上游升级：
 
 - 不要强行 `patch`；
-- 先看上游 `lib/` 是否改了补丁涉及的 21 个文件；
+- 先看上游 `lib/` 是否改了补丁涉及的 23 个文件；
 - 重新基于新版本生成补丁；
 - 更新 `package.json` 里的固定版本、`README`、`CHECKSUMS`；
 - 在干净环境完整回归。

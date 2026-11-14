@@ -18,6 +18,14 @@
   短视频重新进入自主浏览的候选池。
 - 默认提示词禁令（`lib/rules.js`）不改：导入人格时 `bansMuted` 为真，
   它们本来就不进 system prompt；原因记在 `docs/development.md`。
+- 聊天自然度 M3.1：
+  - system prompt 按真实段名和工具表摘掉无关的宿主 Agent / 开发环境说明
+    （bash、workflow、subagent、present、Web GUI、checkout 等），
+    不再只靠带下划线的工具名匹配；`harness:identity` 的 "AI agent" 也去掉。
+  - 普通聊天新增 `fish:life` 段：只从真实的 `watched:` / `looked:` / 画图 /
+    头像事件里取 1–3 行近期经历；`browsed:` 不算看过；没有就不出现。
+  - 每轮“先把话回给他”改为“想怎么接就怎么接”，不再每轮催 `growth_commit`。
+  - 人格里补一句许可：感兴趣可以多说，有想法可以带出来；不改成 KPI。
 - 她可以自己换头像：`her_avatar` 挑一张画过的图（不给路径就用最近那张），
   或 `her_draw(..., asAvatar: true)` 画的同时换。插件写 `avatar:` 事件，
   桥转 640×640 JPG 后调 `setMyProfilePhoto`，并把同一张写成网页状态卡头像。
