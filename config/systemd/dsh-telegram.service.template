@@ -1,0 +1,28 @@
+[Unit]
+Description=dsh-fish Telegram 私聊桥 (mahiro-fish)
+After=dsh-web.service network-online.target
+Wants=dsh-web.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=__FISH_USER__
+Group=__FISH_USER__
+WorkingDirectory=__FISH_HOME__/telegram-bridge
+Environment=HOME=__FISH_HOME__
+Environment=BRIDGE_ENV=__FISH_HOME__/.telegram-bridge.env
+Environment=BRIDGE_STATE_DIR=__FISH_HOME__/.telegram-bridge
+ExecStart=__NODE_BIN__/node __FISH_HOME__/telegram-bridge/bridge.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=__FISH_HOME__/.telegram-bridge
+ProtectHome=no
+
+[Install]
+WantedBy=multi-user.target

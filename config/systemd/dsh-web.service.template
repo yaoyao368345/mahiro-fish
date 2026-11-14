@@ -1,0 +1,31 @@
+[Unit]
+Description=DSH Web (mahiro-fish) · 127.0.0.1:3080
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=__FISH_USER__
+Group=__FISH_USER__
+WorkingDirectory=__FISH_HOME__
+Environment=HOME=__FISH_HOME__
+Environment=PATH=__NODE_BIN__:__FISH_HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DSH_TELEMETRY_MODE=DISABLED
+Environment=DSH_TELEMETRY_DISABLED=1
+EnvironmentFile=-__DSH_ENV__
+ExecStartPre=/usr/bin/truncate -s 0 __FISH_HOME__/.dsh-web/web.log
+ExecStart=__DSH_BIN__ --profile web --host 127.0.0.1 --port 3080 --no-open
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+StandardOutput=append:__FISH_HOME__/.dsh-web/web.log
+StandardError=append:__FISH_HOME__/.dsh-web/web.log
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=no
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

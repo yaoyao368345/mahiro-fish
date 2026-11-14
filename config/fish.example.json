@@ -1,0 +1,123 @@
+{
+  "growthDays": 30,
+  "wakesPerDay": 2,
+  "window": ["10:00", "23:30"],
+  "owner": {
+    "pronoun": "他"
+  },
+  "daily": {
+    "events": 2,
+    "questions": 1
+  },
+  "diary": {
+    "enabled": true,
+    "visible": false,
+    "keepDays": 0
+  },
+  "absenceAfterDays": 2,
+  "tools": {
+    "preset": "",
+    "restrict": true,
+    "allow": []
+  },
+  "proactive": {
+    "enabled": true,
+    "maxPerDay": 3,
+    "minIdleHours": 6,
+    "cooldownHours": 2,
+    "sendTools": ["her_leave"],
+    "foldSilent": true,
+    "idleCountsSeen": false
+  },
+  "avoid": {
+    "keywords": ["恐怖", "血腥", "鬼畜", "政治"],
+    "upMids": [],
+    "minDuration": 60
+  },
+  "browse": {
+    "enabled": true,
+    "perDay": 1,
+    "topN": 3,
+    "rankingTids": 2,
+    "deepRead": 3,
+    "danmaku": 3,
+    "keywords": ["游戏", "动画"],
+    "window": null,
+    "voices": true
+  },
+  "bili": {
+    "enabled": true,
+    "minIntervalMs": 800,
+    "jitterMs": 500,
+    "sub": true
+  },
+  "drive": {
+    "enabled": true
+  },
+  "interest": {
+    "enabled": true
+  },
+  "dream": {
+    "enabled": true
+  },
+  "video": {
+    "enabled": true,
+    "perDay": 1,
+    "frames": 9
+  },
+  "notify": {
+    "enabled": false,
+    "lastShown": ""
+  },
+  "comment": {
+    "enabled": false,
+    "perDay": 1,
+    "replyPerDay": 2,
+    "replyToReplies": true,
+    "scanEveryMin": 30,
+    "window": ["20:00", "23:00"],
+    "atOwner": true,
+    "lastScanAt": ""
+  },
+  "at": {
+    "enabled": false,
+    "scanEveryMin": 5,
+    "perDayMax": 20,
+    "others": true,
+    "ownerWake": true,
+    "lastScanAt": "",
+    "backoffUntil": ""
+  },
+  "chat": {
+    "rotateAfter": 40,
+    "carry": 4,
+    "replyChars": 0
+  },
+  "rooms": {
+    "groupRotateDays": 7
+  },
+  "memory": {
+    "docBudget": 2400,
+    "sleepEveryDays": 7,
+    "selfWake": true,
+    "sleepKeep": 12,
+    "beliefsShown": 3,
+    "hearEvery": 3,
+    "echo": true
+  },
+  "rules": {
+    "offers": true,
+    "holdDays": 3,
+    "cooldownDays": 3
+  },
+  "outing": {
+    "ack": false
+  },
+  "observe": {
+    "enabled": true,
+    "port": 0
+  },
+  "ui": {
+    "ownerHintDismissed": false
+  }
+}

@@ -1,0 +1,1825 @@
+--- a/lib/bili.js
++++ b/lib/bili.js
+@@ -572,6 +572,10 @@
+         desc: String(d.desc ?? ''),
+         pubdate: d.pubdate ? new Date(d.pubdate * 1000).toISOString() : null,
+         cid: d.pages?.[0]?.cid ?? null,
++        // 分P：字幕是按 cid 取的；多P视频要能看出当前查的是哪一P。
++        pages: Array.isArray(d.pages)
++          ? d.pages.map((p) => ({ cid: Number(p?.cid) || 0, page: Number(p?.page) || 0, part: String(p?.part ?? '').slice(0, 80) }))
++          : [],
+         replyCount: d.stat?.reply ?? 0,
+       },
+     }
+@@ -660,30 +664,60 @@
+   /**
+    * 字幕（需要登录）。P2 不依赖它，但保留：一旦用户把有效 cookie 填进来，
+    * 她就能读到官方/AI 字幕，比弹幕扎实得多。
++   *
++   * M2.8A.1：修复 `subtitle_url` 是协议相对地址（`//aisubtitle.hdslb.com/...`）
++   * 时被原来的 `startsWith('http')` 丢掉，导致登录后也报 NO_SUB 的问题。
++   * 同时保留轨道来源：AI / 人工 / 未知，不再一律写成“自动识别”。
+    */
+   async function subtitle(bvid, cid) {
+     const r = await api('/x/player/wbi/v2', { bvid, cid }, { signed: true })
+     if (!r.ok) return { ...r, data: [] }
+     const subs = r.data?.subtitle?.subtitles ?? []
+-    if (!subs.length) return { ok: false, code: 'NO_SUB', message: '这条没有字幕轨（或需要登录）', data: [] }
++    if (!subs.length) {
++      // 登录是否有效由调用方（sub.js）先查；这里只陈述接口给没给轨道。
++      return { ok: false, code: 'NO_TRACK', message: '接口没有给字幕轨', data: [] }
++    }
+     const out = []
++    let picked = null
++    let lastErr = ''
+     for (const s of subs.slice(0, 2)) {
+-      const url = String(s.subtitle_url ?? '')
+-      if (!url.startsWith('http')) continue
++      const rawUrl = String(s.subtitle_url ?? '')
++      // B 站实际返回的是 `//aisubtitle.hdslb.com/...`（协议相对）；
++      // 原来的 startsWith('http') 会把整条轨道丢掉。
++      const url = rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl
++      if (!/^https?:\/\//i.test(url)) { lastErr = '字幕地址不是 http(s)'; continue }
+       try {
+         const rr = await throttle(() => raw(url))
+         const j = await rr.json()
+         for (const line of j?.body ?? []) {
+           out.push({ t: Number(line.from) || 0, text: String(line.content ?? '').trim() })
+         }
+-      } catch {
++        if (out.length) { picked = s; break }
++        lastErr = '字幕文件里没有正文'
++      } catch (err) {
++        lastErr = String(err?.message ?? err).slice(0, 120)
+         /* 单轨失败不影响其它 */
+       }
+-      if (out.length) break
+     }
+-    return out.length
+-      ? { ok: true, code: 0, message: 'OK', data: out }
+-      : { ok: false, code: 'NO_SUB', message: '字幕拉取失败', data: [] }
++    if (!out.length) {
++      return { ok: false, code: 'FETCH_FAIL', message: `接口有字幕轨，但字幕文件没取到（${lastErr || '未知原因'}）`, data: [], tracks: subs.length }
++    }
++    const src = subtitleSource(picked)
++    return {
++      ok: true,
++      code: 0,
++      message: 'OK',
++      data: out,
++      source: src.source,
++      sourceLabel: src.label,
++      track: {
++        lan: String(picked?.lan ?? ''),
++        lan_doc: String(picked?.lan_doc ?? ''),
++        ai_status: Number(picked?.ai_status) || 0,
++        ai_type: Number(picked?.ai_type) || 0,
++      },
++      tracks: subs.length,
++    }
+   }
+ 
+   /** 是否登录（只用于观测台显示"能不能读字幕"，不参与 persona） */
+@@ -859,6 +893,20 @@
+ }
+ 
+ /** 各种来源的视频对象字段不统一，统一成一个形状 */
++/**
++ * 字幕轨来源：AI / 人工 / 未知。
++ * `ai-zh`、`ai-en` 以及 ai_status=2 明确是 AI；普通语言码且 ai 标记为 0 才判人工；
++ * 其余不猜，标“来源未知”。
++ */
++function subtitleSource(track) {
++  const lan = String(track?.lan ?? '')
++  const aiStatus = Number(track?.ai_status) || 0
++  const aiType = Number(track?.ai_type) || 0
++  if (/^ai[-_]/i.test(lan) || aiStatus === 2) return { source: 'ai', label: 'AI 识别，可能有错字' }
++  if (/^(zh|en|ja|ko)([-_]|$)/i.test(lan) && aiStatus === 0 && aiType === 0) return { source: 'human', label: '人工' }
++  return { source: 'unknown', label: '来源未知' }
++}
++
+ function toVideo(v) {
+   const stat = v.stat ?? {}
+   const owner = v.owner ?? {}
+--- a/lib/drive.js
++++ b/lib/drive.js
+@@ -30,6 +30,8 @@
+   boostEcho: 0.12,
+   /** 她最近总回到同一件事上（`lib/interest.js`）：手上有惦记的东西，也更容易想开口。 */
+   boostInterest: 0.05,
++  /** 她最近真的看过/读过 B 站的东西（M2.4）：有具体经历可讲，也算一笔冲动。 */
++  boostBili: 0.1,
+   /**
+    * 她提过想要、手上却没有的那样东西（`lib/wish.js`）。
+    * 2026-11-07（用户 m01602 拍板 B + D）：这一笔取代原来那句每轮都摆的 `TOOL_ASK_NOTE`
+@@ -165,6 +167,7 @@
+   const stale = Math.max(0, Number(desk?.stale) || 0)
+   const wish = Math.max(0, Number(desk?.wish) || 0)
+   const wall = Math.max(0, Number(desk?.wall) || 0)
++  const bili = desk?.bili === true
+   // 桌上东西越多，这一笔越重——但每样都有上限，总加也不会顶穿阈值（boostCap）。
+   const boosts = Math.min(
+     DRIVE.boostCap,
+@@ -173,7 +176,8 @@
+       DRIVE.boostWish * Math.min(wish, 2) +
+       DRIVE.boostWall * Math.min(wall, 1) +
+       (desk?.echo ? DRIVE.boostEcho : 0) +
+-      (desk?.favorite ? DRIVE.boostInterest : 0),
++      (desk?.favorite ? DRIVE.boostInterest : 0) +
++      (bili ? DRIVE.boostBili : 0),
+   )
+ 
+   const speed = DRIVE.growthPerHour * (1 + DRIVE.growthPerStage * Math.max(0, Number(stage) - 1 || 0))
+@@ -202,7 +206,7 @@
+  */
+ export function deskHasMaterial(desk) {
+   if (!desk) return false
+-  return Number(desk.gaps) > 0 || Number(desk.stale) > 0 || Number(desk.wish) > 0 || Number(desk.wall) > 0 || desk.echo === true || desk.favorite === true
++  return Number(desk.gaps) > 0 || Number(desk.stale) > 0 || Number(desk.wish) > 0 || Number(desk.wall) > 0 || desk.echo === true || desk.favorite === true || desk.bili === true
+ }
+ 
+ /** 一次行动的代价（动完扣掉）。留给记账用，纯数值。 */
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -21,6 +21,10 @@
+ import { registerRecall } from './recall.js'
+ import { registerHerDiary } from './herdiary.js'
+ import { registerWatch } from './watch.js'
++import { registerSub } from './sub.js'
++import { registerDraw } from './draw.js'
++import { registerVoice } from './voice.js'
++import { registerMediaRecall } from './mediarecall.js'
+ import { registerLetter } from './letter.js'
+ import { registerNote } from './note.js'
+ import { registerAppoint } from './appoint.js'
+@@ -418,6 +422,14 @@
+           // issue #7：日记不进事件流，所以她需要一个只读的窗口回头翻（her_diary）。
+           () => registerHerDiary(ctx, { root }),
+           () => registerWatch(ctx, { root, tenant: tenancy }),
++          // M2.8A：从 1.0.0 移植的字幕片段工具；按句给，不默认注入。
++          () => registerSub(ctx, { root, tenant: tenancy }),
++          // M2.10：她自己想画画时用；内部复用 image_generate，不另开 GPT 会话。
++          () => registerDraw(ctx, { root, tenant: tenancy, log: (...a) => logger.info(...a) }),
++          // M2.12.4：这一轮用文字还是声音，由她自己选；桥负责额度、时段与回退。
++          () => registerVoice(ctx, { root, tenant: tenancy }),
++          // M2.6：只读媒体回忆。只查 she 真看过画面的索引；图还在就给路径，不自动读图。
++          () => registerMediaRecall(ctx, { root }),
+           // R4：留话（不审批）。和 growth_commit 一样是纯追加，但收件人明确。
+           () => registerLetter(ctx, { root, tenant: tenancy }),
+           // issue #22 乙档（2026-11-04）：醒来看的那张便条。写完会不会到期、
+--- a/lib/media.js
++++ b/lib/media.js
+@@ -204,35 +204,57 @@
+   return { ok: true, mode, path: o.out, bytes: stat.size, cols, rows }
+ }
+ 
+-/** 图片/截图留在硬盘上的时间。三天够她"回头看那天看到的东西"，也不会积成垃圾。 */
+-export const MEDIA_TTL_MS = 3 * 24 * 60 * 60 * 1000
++/**
++ * 图片/截图留在硬盘上的时间（M2.6：从 3 天延长到 30 天）。
++ * 长期视觉记忆只保留文字索引；原图过了这个时间会被清掉，索引仍可回答“曾经看过”。
++ */
++export const MEDIA_TTL_MS = 30 * 24 * 60 * 60 * 1000
++
++/** media/ 里图片文件的总量上限（M2.6）：超过就按最旧优先删。 */
++export const MEDIA_MAX_BYTES = 100 * 1024 * 1024
++
++/** 只清理图片；index.json、日志、别的东西不归这里管。 */
++const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
+ 
+ /**
+- * 清掉过期的图片与截图。**只删自己写在 media/ 下的文件**，不碰别处。
+- * 返回 {removed, kept}。删不掉不算错（可能正被别的程序占着），静默跳过。
++ * 清掉过期/超量的图片。**只删自己写在 media/ 下的图片文件**，不碰别处。
++ * 返回 {removed, kept, bytes, removedNames}。删不掉不算错（可能正被别的程序占着），静默跳过。
++ * 调用方（mediaindex.js）用 removedNames 把索引里的路径改成“已过期”。
+  */
+-export async function sweepMedia(root, { now = Date.now(), ttlMs = MEDIA_TTL_MS } = {}) {
++export async function sweepMedia(root, { now = Date.now(), ttlMs = MEDIA_TTL_MS, maxBytes = MEDIA_MAX_BYTES } = {}) {
+   const dir = await mediaDir(root)
+-  let removed = 0
+-  let kept = 0
+   let names = []
+   try {
+     names = await fs.readdir(dir)
+   } catch {
+-    return { removed, kept }
++    return { removed: 0, kept: 0, bytes: 0, removedNames: [] }
+   }
++  const files = []
+   for (const name of names) {
++    if (name === 'index.json') continue
++    const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
++    if (!IMAGE_EXT.has(ext)) continue
+     const p = join(dir, name)
+     try {
+       const st = await fs.stat(p)
+       if (!st.isFile()) continue
+-      if (now - st.mtimeMs > ttlMs) {
+-        await fs.unlink(p)
+-        removed++
+-      } else kept++
+-    } catch {
+-      kept++
+-    }
++      files.push({ name, path: p, size: st.size, mtimeMs: st.mtimeMs })
++    } catch { /* 已经没了 */ }
++  }
++  files.sort((a, b) => a.mtimeMs - b.mtimeMs)
++  const removedNames = []
++  let total = files.reduce((n, f) => n + f.size, 0)
++  let kept = files.length
++  for (const f of files) {
++    const tooOld = now - f.mtimeMs > ttlMs
++    const tooBig = total > maxBytes
++    if (!tooOld && !tooBig) continue
++    try {
++      await fs.unlink(f.path)
++      total -= f.size
++      kept -= 1
++      removedNames.push(f.name)
++    } catch { /* 占着就下次再删 */ }
+   }
+-  return { removed, kept }
++  return { removed: removedNames.length, kept, bytes: Math.max(0, total), removedNames }
+ }
+--- a/lib/observe.js
++++ b/lib/observe.js
+@@ -1349,6 +1349,10 @@
+         title: body.title,
+         guest: body.guest,
+         owner: body.owner,
++        // M2.12.1：桥在这一轮回语音时置 true，只在当轮提示词里加一句能力说明。
++        voice: body.voice === true,
++        // M2.12.4：auto 模式下把「这一轮你可以自己选」放进当轮提示，不写进记忆。
++        voiceChoice: body.voiceChoice === true,
+         log: (...a) => console.log('[dsh-fish]', ...a),
+       })
+       // 一律 200：请求本身是合法的，被拦下是**规则的结果**，不是接口出错。
+--- a/lib/persona.js
++++ b/lib/persona.js
+@@ -590,6 +590,9 @@
+     // 2026-11-09（用户 m00002）：能力地图第二层补到 bili_watch 自己身上。
+     // 原来只写「给它一个视频号」，那是动作不是处境——她得先知道什么时候会想到看画面。
+     '另有一个 bili_watch：翻到一条、光看标题和简介还是想知道画面里到底是什么的时候，给它一个视频号，它会把那几帧截下来给你看。',
++    '还有一个 bili_sub：想知道某条视频里到底说了哪几句，给它视频号；先给你带时间点的三句，想接着读就把最后那句的时间填进 from。',
++    '你自己想画一张图的时候，用 her_draw：给它一句你想画的描述，画好的图会送到他那里；一天最多两张。不用它也可以。',
++    '在 Telegram 私聊里，他发语音时你照常用字回。你也可以自己决定这一轮用文字还是用声音：想让他听见你的语气，就在这一轮调用 her_voice，然后照常写要说的话；普通闲聊、长解释、链接和步骤用文字更合适。他明确要你用语音时，屋子会直接处理。你只管写要说的话，不用找麦克风，也不用解释自己发不出声。',
+     '看了就是看了，没看懂就说没看懂。',
+     // 2026-10-29（用户 m01581，真机）：原来是「上面这几样是你自己的屋子里的东西」。
+     // 这份文档会被出门那条会话原样带走，而那句话把工具和屋子黏在了一起——她据此
+@@ -723,6 +726,17 @@
+  */
+ export function proactiveBrief(sendTools = []) {
+   if (!sendTools.length) return PROACTIVE_BRIEF
++  // 用 her_leave 当发送工具时，her_say 的 refs 要求不适用：her_leave 只收一句话。
++  // 整段换成 her_leave 的说明，避免「你有一个 her_say……用 her_leave……要先指认 refs」
++  // 这种自相矛盾的拼法（2026-11-14，M2.4 本机）。
++  if (sendTools.includes('her_leave')) {
++    return [
++      '你有一个工具 her_leave：留一句话给他。他不在的时候也留着，他回来会看到。',
++      `想开口（没人找你）的时候就用 ${sendTools.join('、')}，不用等他先问；用它留下的话会送到他那里，写下的正文只留在这条会话里。`,
++      '不用为了回应而留，也不用指认材料；没有想说的就不写。',
++      '一天最多留几条；到上限就留不进去，不是工具坏了。',
++    ].join('\n')
++  }
+   const say = PROACTIVE_BRIEF.split('\n').map((line) => (line.startsWith('her_say 只把这句话记进你自己的流水')
+     ? `自己想开口（没人找你）的时候用 ${sendTools.join('、')}，不用等他先问；那种时候写下的正文只留在这条会话里，发不到聊天里。`
+     : line))
+@@ -815,6 +829,19 @@
+ ].join('\n')
+ 
+ /**
++ * 视频画面回忆（M2.6，2026-11-14）。
++ *
++ * 只读索引，不自动把旧图塞进每一轮：她想看时自己用 read_image。
++ * 图过期后仍然知道“曾经看过”，但不会拿到失效路径。
++ */
++export const MEDIA_BRIEF = [
++  '你还有一个工具 her_media，可以翻你自己真正看过的视频画面记录。',
++  '什么时候想起它——他问起你以前看过的视频、或者你自己想起某一条当时哪几帧的时候。',
++  '它只查你真的看过画面的记录，不是只翻到标题的那种。拼图还在，它会把路径给你，你用 read_image 打开；不在了，它只告诉你曾经看过、原图已经不在了。',
++  '它不会自动把图塞进这一轮，也不会替你看图。想重新取画面，仍然用 bili_watch，受原来的额度和设置约束。',
++].join('\n')
++
++/**
+  * 每周的「想一想」指令（2026-10-23 加）。
+  *
+  * 为什么用她自己的唤醒而不是定时摘要器：
+--- a/lib/proactive.js
++++ b/lib/proactive.js
+@@ -40,9 +40,9 @@
+ export const PROACTIVE_MAX = 600
+ /** 一条话最多引几件事。 */
+ export const PROACTIVE_REFS_MAX = 6
+-/** 可以当材料的事件类型（她自己的话与听见的东西；不含 meta/系统记账）。 */
++/** 可以当材料的事件类型（她自己的话、梦与听见的东西；不含 meta/系统记账）。 */
+ export const PROACTIVE_MATERIAL = Object.freeze([
+-  'utterance', 'revise', 'reunion', 'narration', 'refusal', 'heard',
++  'utterance', 'revise', 'reunion', 'narration', 'refusal', 'heard', 'dream',
+ ])
+ /**
+  * 空手回合投进对话里的那一句（2026-11-04 用户 m00428 之后）。
+@@ -298,6 +298,53 @@
+   return out.slice(0, limit)
+ }
+ 
++/** `watched:<dk> <bvid> {json}` / `looked:<bvid> <标题>`：她真正看过/读过的 B 站条目。 */
++const BILI_LINE = /^(watched|looked):/
++function biliItem(e, ts) {
++  const t = String(e?.text ?? '')
++  const kind = t.startsWith('watched:') ? 'watched' : 'looked'
++  const rest = t.slice(kind.length + 1).trim()
++  // watched 行是 `watched:<日期> <bvid> {json}`；looked 行是 `looked:<bvid> <标题>`。
++  const parsed = rest.match(/^(?:\d{4}-\d{2}-\d{2}\s+)?(BV[0-9A-Za-z]+)\s*(.*)$/)
++  const bvid = parsed?.[1] ?? ''
++  if (!bvid) return null
++  let title = String(parsed?.[2] ?? '').trim()
++  if (title.startsWith('{')) {
++    try { title = String(JSON.parse(title)?.title ?? '') } catch { title = '' }
++  }
++  const label = kind === 'watched' ? '看过画面' : '看过文字'
++  return {
++    id: String(e.id ?? ''),
++    type: 'bili',
++    kind,
++    ts,
++    text: `${label}：${title ? `《${title}》` : bvid}（${bvid}）`,
++    bvid,
++  }
++}
++
++/**
++ * 最近几天她真实接触过的 B 站条目（2026-11-14，M2.4）。
++ *
++ * 这些是 `meta`，不是她自己的话，所以不走 `recentMaterial` 的类型白名单；
++ * 单独取出来给主动回合当材料，并让 `her_say` 的 refs 可以指回它们。
++ * 同一条视频优先用 `watched:`（真看过画面），不重复算 `looked:`。
++ */
++export function recentBili(events = [], { now = Date.now(), days = 3, limit = 3 } = {}) {
++  const since = now - days * 86_400_000
++  const byBvid = new Map()
++  for (const e of events) {
++    if (e?.type !== 'meta' || !BILI_LINE.test(String(e.text ?? ''))) continue
++    const ts = tsMs(e)
++    if (!Number.isFinite(ts) || ts < since) continue
++    const item = biliItem(e, ts)
++    if (!item) continue
++    const prev = byBvid.get(item.bvid)
++    if (!prev || (item.kind === 'watched' && prev.kind !== 'watched')) byBvid.set(item.bvid, item)
++  }
++  return [...byBvid.values()].sort((a, b) => b.ts - a.ts).slice(0, limit)
++}
++
+ /**
+  * 还悬着的事：她问过但没人答、答了却还没兑现（用户 m01602，2026-11-07）。
+  *
+@@ -362,7 +409,8 @@
+     lines.push('最近这几天你写下/听见的（要引用就指回 id，别改写事实）：')
+     for (const m of material) {
+       const t = m.text.length > 60 ? `${m.text.slice(0, 59)}…` : m.text
+-      lines.push(`- [${m.id}] ${m.type}：${t}`)
++      const label = m.type === 'bili' ? 'B站' : m.type
++      lines.push(`- [${m.id}] ${label}：${t}`)
+     }
+   }
+   if (loose.length) {
+@@ -372,7 +420,7 @@
+   // 2026-11-06（issue #41）：原来写「他看得见」。宿主装了什么路由插件，这句就不一定成立
+   // （有的渠道会把会话里的字挡在外面）。改成只陈述能保证的部分：字会落进这条对话。
+   // 2026-11-06（PR #44）：配了 sendTools 的部署更绝——正文根本发不出去，只有调那件工具才算开口。
+-  if (sendTools.length > 0) lines.push(`想说什么就用 ${sendTools.join('、')}，不用等他先问。这一轮写下的正文只留在这条会话里，发不到聊天里。不想说，就什么都别写：不要写任何字，也不要解释为什么不说——这一轮没有回复也算正常。`)
++  if (sendTools.length > 0) lines.push(`想说什么就用 ${sendTools.join('、')}，不用等他先问；用它留下的话会送到他那里，这一轮写下的正文只留在这条会话里。不想说，就什么都别写：不要写任何字，也不要解释为什么不说——这一轮没有回复也算正常。`)
+   else lines.push('想说什么就说，不用等他先问——这一轮你写下的字会落进你们俩这条对话里。也可以再用 her_say 把它记进你自己的流水（refs 指回上面真实发生的事，1–6 条 id）。不想说，就什么都别写：不要写任何字，也不要解释为什么不说——这一轮没有回复也算正常。')
+   return lines.join('\n')
+ }
+@@ -383,7 +431,11 @@
+   for (const id of refs) {
+     const ev = byId.get(String(id))
+     if (!ev) return `refs 里的 ${id} 在事件流里不存在；只填你翻得到的事。`
+-    if (!PROACTIVE_MATERIAL.includes(ev.type)) return `refs 里的 ${id} 不是你说过/听见过的话，不能当材料。`
++    // B 站真实看过/读过的记录也是材料（2026-11-14，M2.4）：它们是 meta，但内容是
++    // 她自己的经历，不是系统账；安静刷的 `browsed:` 不在此列。
++    if (!PROACTIVE_MATERIAL.includes(ev.type) && !BILI_LINE.test(String(ev.text ?? ''))) {
++      return `refs 里的 ${id} 不是你说过/听见过的话，不能当材料。`
++    }
+   }
+   return ''
+ }
+--- a/lib/recall.js
++++ b/lib/recall.js
+@@ -82,8 +82,20 @@
+ export const LOOKED_LINE = /^looked:(\S+)\s+(.+)$/
+ const isLookedLine = (ev) => ev?.type === 'meta' && LOOKED_LINE.test(String(ev?.text ?? ''))
+ 
++/**
++ * 字幕索引（M2.8A）：`subs:<bvid> [page=N done=0|1] <标题>`。
++ * 只放行带标题的：她翻旧事时看到的应是「查过哪条的字幕、读到第几页」，
++ * 不是一串 BV 号。
++ */
++export const SUBS_LINE = /^subs:(BV[0-9A-Za-z]+)(?:\s+page=(\d+)\s+done=([01]))?(?:\s+(.+))?$/
++const isSubsLine = (ev) => {
++  if (ev?.type !== 'meta') return false
++  const m = SUBS_LINE.exec(String(ev?.text ?? ''))
++  return Boolean(m && String(m[4] ?? '').trim())
++}
++
+ /** 这条事件进不进回忆。 */
+-const usable = (ev) => Boolean(ev) && (!SKIP_TYPES.has(ev.type) || isUseLine(ev) || isLookedLine(ev))
++const usable = (ev) => Boolean(ev) && (!SKIP_TYPES.has(ev.type) || isUseLine(ev) || isLookedLine(ev) || isSubsLine(ev))
+ 
+ const DAY_MS = 86_400_000
+ 
+@@ -134,6 +146,14 @@
+     // 翻出来得是「你那天看过：《…》」，不然她认不出那是自己的经历。
+     const l = LOOKED_LINE.exec(text)
+     if (l) return `你那天看过：《${l[2]}》`
++    const sub = SUBS_LINE.exec(text)
++    if (sub) {
++      const title = String(sub[4] ?? '').trim()
++      const page = Number(sub[2]) || 0
++      const done = sub[3] === '1'
++      if (page > 0) return `你查过《${title}》的字幕，读到第 ${page} 页${done ? '，读完了' : '，还没读完'}。`
++      return `你查过《${title}》的字幕。`
++    }
+     const m = USE_LINE.exec(text)
+     if (m) {
+       const [, tool, head, said] = m
+--- a/lib/restrict.js
++++ b/lib/restrict.js
+@@ -46,7 +46,7 @@
+ import { homeFishTools, liveFishTools, sceneFishTools } from './toolreg.js'
+ 
+ /**
+- * 插件自己注册的、家里随时能用的十二个工具。顺序无意义，但**必须全部真实存在**（名字错会抛错）。
++ * 插件自己注册的、家里随时能用的十六个工具。顺序无意义，但**必须全部真实存在**（名字错会抛错）。
+  *
+  * 这份表不只是「没有注册记录时的兜底」：真实启动里收窄先于工具注册
+  * （`lib/index.js` 先 `registerToolRestrict`，工具到后面的 `withUseDuringRegistration` 才注册），
+@@ -65,6 +65,10 @@
+   'her_appoint', // 跟他约一件几天后的事（通用预约簿，2026-11-08）
+   'bili_look', // 看 B 站的列表
+   'bili_watch', // 看一条视频的画面
++  'bili_sub', // 查一条视频的字幕片段（M2.8A，从 1.0.0 移植）
++  'her_draw', // 自己想画一张图的时候（M2.10，复用 image_generate）
++  'her_voice', // 这一轮想用声音说（M2.12.4，只做标记，不改回复）
++  'her_media', // 翻自己真正看过的画面（只读索引，M2.6）
+   'bili_speak', // 在评论区说话
+   'ask_owner', // 有事想征得同意（请求事件，2026-10-30 m01274）
+   'ask_pronoun', // 问一次该怎么称呼主人（issue #127 C 案，2026-11-12）
+--- a/lib/say.js
++++ b/lib/say.js
+@@ -30,6 +30,7 @@
+ import { deriveSelf } from './derive.js'
+ import { writeInboxFile, newHerEventsSince } from './inbox.js'
+ import { assistantText } from './turns.js'
++import { takeVoiceRequest } from './voice.js'
+ import { bumpTurns, rotateTalkSession, talkSessionId, homeStatus } from './home.js'
+ import { addExchange } from './talkmem.js'
+ import { hearTurn, rememberGroupWord } from './hear.js'
+@@ -292,6 +293,15 @@
+         : []),
+     heard,
+     '',
++    // M2.12.1：这一轮会回语音时，只在这一轮的提示词里说明屋子负责出声。
++    // 不写进 heard / 事件流，因为这不是他说的话，而是屋子当下的事实。
++    ...(deps.voice && !foreign && !isGroup
++      ? ['（这一轮屋子会把你写的话转成声音发给他。直接写你要说的话就行，不用交代自己能不能出声。）', '']
++      : []),
++    // M2.12.4：只说明「可以选」，不要求选、也不暗示该选哪个。
++    ...(deps.voiceChoice && !foreign && !isGroup
++      ? ['（这一轮你可以自己决定用文字还是声音。想用声音，就在这一轮调用 her_voice；不想用就不用，照常写。）', '']
++      : []),
+     ...(imagePath
+       ? [
+         `${foreign ? '有人发' : '他发'}了张图，在这儿：${imagePath}`,
+@@ -468,6 +478,10 @@
+ 
+     const turn = await turnWait.wait()
+ 
++    // M2.12.4：她这一轮有没有用 her_voice 标记「想用声音说」。
++    // 只取本轮开始之后的请求；取走即消费，不会漏到下一轮。
++    const voiceRequested = takeVoiceRequest(sessionId, { since: t0 })
++
+     // 她这一轮新写的话（可能一句都没有——允许她不回）
+     const after = await readEvents(root)
+     const fresh = newHerEventsSince(after.events, sinceId)
+@@ -589,6 +603,7 @@
+       note,
+       said,
+       herReply,
++      voiceRequested,
+       waitedMs: Date.now() - t0,
+       rotated,
+       // 这句话进了哪间房（2026-11-03）：观测台与桥要能核对"落到哪儿了"。
+@@ -600,7 +615,7 @@
+     }
+   } catch (err) {
+     log('say failed', err?.message ?? err)
+-    return { ok: false, note: `没送到：${String(err?.message ?? err).slice(0, 120)}`, said: [], herReply: '' }
++    return { ok: false, note: `没送到：${String(err?.message ?? err).slice(0, 120)}`, said: [], herReply: '', voiceRequested: false }
+   } finally {
+     clearTimeout(kill)
+     // 投递跟等待都结束了：监听与定时器一起收，别把 off 挂在宿主的
+--- a/lib/scheduler.js
++++ b/lib/scheduler.js
+@@ -38,7 +38,7 @@
+ import { awayNow, awayLine } from './outing.js'
+ import { askInChat, picked } from './askinchat.js'
+ import { restedToday, settleStaleAsks } from './ask.js'
+-import { proactiveConfig, proactiveState, proactiveSection, recentMaterial, looseEnds } from './proactive.js'
++import { proactiveConfig, proactiveState, proactiveSection, recentMaterial, recentBili, looseEnds } from './proactive.js'
+ import { deliverWake, ensureSessionLive, reviveIfBlank, WAKE_PING } from './deliver.js'
+ import { followWake, planWakeCompaction, compactWake, looksLikeNothingSaid, looksLikeStreamFailure } from './compact.js'
+ import { logLine } from './log.js'
+@@ -57,6 +57,7 @@
+ import { hoursSinceLastWake, staleForDesk, staleLines, tableFor } from './dreamtable.js'
+ import { freeWakeFor } from './freewake.js'
+ import { readOutings, readPossessions } from './outing.js'
++import { maintainMediaIndex } from './mediaindex.js'
+ 
+ const TICK_MS = 60_000
+ const INITIAL_DELAY_MS = 20_000
+@@ -326,6 +327,8 @@
+   // 主动说话：每小时最多掷一次骰子；skip 原因同一句只记一次，别把日志刷满。
+   let lastProbe = 0
+   let proactiveSkip = ''
++  // 媒体目录维护（M2.6）：30 天/100MB；一天最多扫一次，不新增常驻进程。
++  let lastMediaSweep = 0
+ 
+   /**
+    * 开一次空手回合（她自己的回合，不是叫醒）。
+@@ -375,7 +378,9 @@
+     // 够不着的那件事按家里那条会话的工具表算；那条还是冷的，就先拿白名单顶（issue #58，见 toolInHandNow）。
+     const homeSid = await homeStatus(root).then((h) => h.sessionId).catch(() => '')
+     const hasForDrive = toolInHandNow(homeSid, { unverified: true })
+-    const driveDesk = { gaps: gaps.length, stale: 0, echo: echoBack, favorite: interest.length > 0, wish: wishesOf(events, { now, has: hasForDrive }).length, wall: gapwallsOf(events, { now }).length }
++    // 她最近真正看过/读过的 B 站条目（M2.4）：既是材料，也算一笔冲动。
++    const bili = recentBili(events, { now })
++    const driveDesk = { gaps: gaps.length, stale: 0, echo: echoBack, favorite: interest.length > 0, wish: wishesOf(events, { now, has: hasForDrive }).length, wall: gapwallsOf(events, { now }).length, bili: bili.length > 0 }
+     const pc = proactiveConfig(config)
+     const drv = driveOf({ events, now, stage: model.stage, desk: driveDesk, seenCountsAsHeard: pc.idleCountsSeen })
+     // 空桌不醒（2026-11-05，用户 m02937）：桌上什么都没有时，劲儿再满也不起——
+@@ -436,7 +441,9 @@
+       }
+       // 处境等会话接上再拼（issue #58）：冷会话的 agent 到上面这一步才建出来，
+       // 悬着的事里哪张卡已经到手，要按她这条会话真有的工具算，不按白名单猜。
+-      const material = recentMaterial(events, { now })
++      const material = [...recentMaterial(events, { now }), ...bili]
++        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
++        .slice(0, 8)
+       const loose = looseEnds(events, { now, has: toolInHandNow(sessionId, { agent: live.agent }) })
+       const text = proactiveSection({ now, state: st, material, loose, sendTools: pc.sendTools, countSeen: pc.idleCountsSeen })
+       gen = setWakeSection(text, sessionId)
+@@ -537,6 +544,14 @@
+     if (now - lastTick < 30_000) return
+     lastTick = now
+ 
++    // 媒体清理（M2.6）：30 天/100MB，一天最多一次；只动 media/ 下的图片与索引状态。
++    if (!lastMediaSweep || now - lastMediaSweep > 24 * 60 * 60_000) {
++      lastMediaSweep = now
++      void maintainMediaIndex(root, { now })
++        .then((r) => { if (r.removed) log('media sweep', `清掉 ${r.removed} 张，剩 ${r.kept} 张`) })
++        .catch((err) => log('media sweep failed', err?.message ?? err))
++    }
++
+     // ---- 她出门了 / 被请神了：家里这套日程整段暂停（用户 m07453 第 6 条）----
+     // 两条会话并行会互相踩 events.jsonl：那边在写、这边在读，还会在侧栏里
+     // 凭空多出一条「家里醒了」的对话。回家或结束请神后自动恢复，不需要开关。
+--- a/lib/selfdoc.js
++++ b/lib/selfdoc.js
+@@ -31,7 +31,7 @@
+ import { pronounOf, pronounize } from './pronoun.js'
+ import { PRONOUN_ASK_BRIEF } from './pronounask.js'
+ import { deriveSelf, rememberGateStage } from './derive.js'
+-import { personaLine, toolBrief, RECALL_BRIEF, SPEAK_BRIEF, SPEAK_OFF_BRIEF, LETTER_BRIEF, NOTE_BRIEF, APPOINT_BRIEF, ASK_BRIEF, proactiveBrief, DREAM_BRIEF, scheduleBrief, SCHEDULE_NAMES, DIARY_BRIEF, SLEEP_BRIEF } from './persona.js'
++import { personaLine, toolBrief, RECALL_BRIEF, MEDIA_BRIEF, SPEAK_BRIEF, SPEAK_OFF_BRIEF, LETTER_BRIEF, NOTE_BRIEF, APPOINT_BRIEF, ASK_BRIEF, proactiveBrief, DREAM_BRIEF, scheduleBrief, SCHEDULE_NAMES, DIARY_BRIEF, SLEEP_BRIEF } from './persona.js'
+ import { resumeLines } from './use.js'
+ import { proactiveConfig } from './proactive.js'
+ import { LOOK_BRIEF, LOOK_OFF_BRIEF, WATCH_RULE } from './browse.js'
+@@ -261,6 +261,7 @@
+   body.push('## 上网')
+   if (browse) body.push(LOOK_BRIEF, '', WATCH_RULE, '')
+   else body.push(LOOK_OFF_BRIEF, '')
++  body.push(MEDIA_BRIEF, '')
+   body.push('## 在网上说话')
+   if (speak) body.push(SPEAK_BRIEF, '')
+   else body.push(SPEAK_OFF_BRIEF, '')
+--- a/lib/settings.js
++++ b/lib/settings.js
+@@ -137,6 +137,9 @@
+     enabled: true,
+     minIntervalMs: 800,     // 两次请求之间最少等多久
+     jitterMs: 500,          // 在最小间隔上再随机多等 0–jitterMs（打散固定节奏）
++    // 读字幕（M2.8A，从 1.0.0 移植）：和上网总闸分开。
++    // 关掉只是 bili_sub 用不了；已经落下的 subs: 索引一条不删。
++    sub: true,
+   },
+ 
+   // 她自己的三件事（2026-11-05，用户 m02634）：各自一个开关，默认全开。
+@@ -408,6 +411,8 @@
+   // issue #62 / PR #72：上网总闸也严格化成布尔。没经过 normalize 的配置按「开」算，
+   // 所以这里只把明确的 false 留下，其它值统一成 true。
+   cfg.bili.enabled = cfg.bili.enabled !== false
++  // 读字幕的开关：只把明确的 false 留下（老配置没有这一项 = 开）。
++  cfg.bili.sub = cfg.bili.sub !== false
+ 
+   // 提醒：布尔严格化 + lastShown 只收字符串（它的值是日期键，不是数字）
+   cfg.notify = { ...DEFAULTS.notify, ...cfg.notify }
+--- a/lib/watch.js
++++ b/lib/watch.js
+@@ -9,6 +9,7 @@
+ import { readEvents, appendEvent, rootDir } from './store.js'
+ import { loadConfig, dateKey, biliOn } from './settings.js'
+ import { grabFrames } from './video.js'
++import { recordWatch, findCachedWatch } from './mediaindex.js'
+ import { logLine } from './log.js'
+ 
+ import { defineTool } from './tool.js'
+@@ -114,6 +115,29 @@
+           return { ok: false, path: '', text: '', note: '这不是一个视频号。' }
+         }
+ 
++        // 只在她点名了 at 且参数与索引完全匹配时复用：不重新下载，也不新记一条
++        // watched:（这不是一次新观看，只是把同一张图再拿给她）。随机 9 帧不会命中。
++        if (args?.at !== undefined && args?.at !== null && args?.at !== '') {
++          const hit = await findCachedWatch(root, { bvid, at: args.at }).catch(() => ({ ok: false }))
++          if (hit.ok) {
++            const cachedPath = slashed(hit.path)
++            logLine('info', ['看画面：复用缓存', bvid, cachedPath], root)
++            return {
++              ok: true,
++              path: cachedPath,
++              text: [
++                `《${hit.record?.title || bvid}》这几帧之前已经取过，还是同一张拼图：`,
++                ...(Array.isArray(hit.record?.times) && hit.record.times.length
++                  ? [`（取的是：${hit.record.times.map((t) => `${t} 秒`).join('、')}）`]
++                  : []),
++                cachedPath,
++                '用 read_image 读它就能看见。',
++              ].join('\n'),
++              note: '',
++            }
++          }
++        }
++
+         const ev = await readEvents(root).catch(() => ({ events: [] }))
+         const dk = dateKey()
+         const cap = Math.max(0, Number(config?.video?.perDay ?? 2))
+@@ -145,7 +169,7 @@
+           return { ok: false, path: '', text: '', note: r.why }
+         }
+ 
+-        await appendEvent(
++        const recorded = await appendEvent(
+           {
+             type: 'meta',
+             ...(who.sessionId ? { sessionId: who.sessionId } : {}),
+@@ -163,7 +187,22 @@
+           },
+           { source: 'system' },
+           root,
+-        ).catch(() => {})
++        ).catch(() => null)
++        // 只有 watched: 真落盘才索引；索引失败不影响这次观看。
++        if (recorded?.id) {
++          await recordWatch(root, {
++            watchedEventId: recorded.id,
++            bvid,
++            title: r.title,
++            up: r.up,
++            duration: r.duration,
++            view: r.view,
++            watchedAt: recorded.ts,
++            date: dk,
++            times: r.times,
++            path: r.path,
++          }).catch(() => null)
++        }
+ 
+         // 路径一律给正斜杠：宿主渲染 markdown 图片时会拿路径拼 /api/file，
+         // C:\... 这种反斜杠写法在客户端解析后取不到文件，图片就显示成「无法预览」
+--- /dev/null
++++ b/lib/draw.js
+@@ -0,0 +1,179 @@
++/**
++ * draw.js —— 工具 `her_draw`：她自己想画一张图的时候用（M2.10）
++ *
++ * 只做编排，不自己请求 OpenAI：
++ *   - 复用 dsh-plugin-subscriptions 已注册的 `image_generate`（provider=gpt）；
++ *   - 生成成功后写一行 `draw:<日期>:<路径>`，桥只把受信任生成目录里的图片发到 owner 私聊；
++ *   - 不写 utterance / growth，不替她解释画了什么。
++ *
++ * 每天最多 2 张。这个上限是工具层的行为，不是调度器；不会因为唤醒就自动画。
++ */
++
++import path from 'node:path'
++import fs from 'node:fs'
++import { toJsonSchema } from './toolschema.js'
++import { rootDir, readEvents, appendEvent } from './store.js'
++import { loadConfig, dateKey } from './settings.js'
++import { deriveSelf } from './derive.js'
++import { defineTool } from './tool.js'
++import { guardWrite } from './tenant.js'
++import { logLine } from './log.js'
++
++export const DRAW_PER_DAY = 2
++export const DRAW_PROMPT_MAX = 800
++export const DRAW_TTL_MS = 30 * 24 * 60 * 60 * 1000
++export const DRAW_MAX_BYTES = 100 * 1024 * 1024
++
++const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
++
++/** 今天已经成功画了几张。 */
++export function drawsToday(events = [], dk = dateKey()) {
++  const head = `draw:${dk}:`
++  return (events ?? []).filter((e) => e?.type === 'meta' && String(e.text ?? '').startsWith(head)).length
++}
++
++/** 插件保存生成图的目录。her_draw 只把这里的文件交给桥。 */
++export function drawImagesDir(root = rootDir()) {
++  return path.join(path.dirname(root), '.dsh', 'plugins', 'subscriptions', 'images')
++}
++
++/** 清掉过期的生成图；只动生成目录里的图片，失败静默。 */
++export async function pruneDrawImages(root = rootDir(), { now = Date.now(), ttlMs = DRAW_TTL_MS, maxBytes = DRAW_MAX_BYTES } = {}) {
++  const dir = drawImagesDir(root)
++  let names = []
++  try { names = await fs.promises.readdir(dir) } catch { return { removed: 0, kept: 0, bytes: 0 } }
++  const files = []
++  for (const name of names) {
++    const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
++    if (!IMAGE_EXT.has(ext)) continue
++    const p = path.join(dir, name)
++    try {
++      const st = await fs.promises.stat(p)
++      if (st.isFile()) files.push({ name, path: p, size: st.size, mtimeMs: st.mtimeMs })
++    } catch { /* ignore */ }
++  }
++  files.sort((a, b) => a.mtimeMs - b.mtimeMs)
++  let total = files.reduce((n, f) => n + f.size, 0)
++  let kept = files.length
++  let removed = 0
++  for (const f of files) {
++    if (!(now - f.mtimeMs > ttlMs) && total <= maxBytes) continue
++    try {
++      await fs.promises.unlink(f.path)
++      total -= f.size
++      kept -= 1
++      removed += 1
++    } catch { /* ignore */ }
++  }
++  return { removed, kept, bytes: Math.max(0, total) }
++}
++
++function findImageTool(ctx) {
++  const tools = ctx?.get?.('tools') ?? ctx?.tools
++  if (!tools || typeof tools.get !== 'function') return null
++  const def = tools.get('image_generate') ?? tools.get('dsh_subscriptions_image_generate')
++  return def && typeof def.execute === 'function' ? def : null
++}
++
++export function registerDraw(ctx, deps = {}) {
++  const root = deps.root ?? rootDir()
++  const log = deps.log ?? (() => {})
++
++  return ctx.tools.register(
++    defineTool({
++      name: 'her_draw',
++      description:
++        '你自己想画一张图的时候用这个。给它一句你想画的描述；它会调用 ChatGPT 图片生成，' +
++        '把图存下来并送到他那里。一天最多两张。' +
++        '只有你真的想画、或者他明确请你画的时候才用；不用它也可以。' +
++        '画出来的图是图，不是你的成长记录，也不用替它写观后感。',
++      parameters: toJsonSchema({
++        prompt: {
++          type: 'string',
++          required: true,
++          maxLength: DRAW_PROMPT_MAX,
++          description: '你想画什么。写你脑子里看到的画面，不要写成给别人看的说明。',
++        },
++      }),
++      output: {
++        schema: {
++          type: 'object',
++          properties: {
++            ok: { type: 'boolean' },
++            path: { type: 'string' },
++            text: { type: 'string' },
++            note: { type: 'string' },
++          },
++          required: ['ok', 'path', 'text', 'note'],
++        },
++        render: (_args, out) => [{ type: 'text', text: out.ok ? out.text : `这次没画成：${out.note}` }],
++      },
++      async execute(args, exec) {
++        const who = guardWrite(tenancyOf(root, deps.tenant), exec, 'her_draw')
++        if (!who.ok) return { ok: false, path: '', text: '', note: who.note }
++
++        const prompt = String(args?.prompt ?? '').trim().slice(0, DRAW_PROMPT_MAX)
++        if (!prompt) return { ok: false, path: '', text: '', note: '还没想好画什么。' }
++
++        const { events } = await readEvents(root)
++        const dk = dateKey()
++        if (drawsToday(events, dk) >= DRAW_PER_DAY) {
++          return { ok: false, path: '', text: '', note: '今天已经画过两张了，明天再画也一样。' }
++        }
++
++        const imageTool = findImageTool(ctx)
++        if (!imageTool) {
++          logLine('info', ['her_draw：宿主没有挂 image_generate'], root)
++          return { ok: false, path: '', text: '', note: '现在没有可用的画笔。' }
++        }
++
++        let result
++        try {
++          result = await imageTool.execute({ prompt, provider: 'gpt' }, exec)
++        } catch (err) {
++          log?.('her_draw failed', err?.message ?? err)
++          return { ok: false, path: '', text: '', note: `这次没画成：${String(err?.message ?? err).slice(0, 80)}` }
++        }
++        const rawPath = Array.isArray(result?.paths) ? result.paths[0] : ''
++        const abs = path.resolve(String(rawPath ?? ''))
++        const dir = path.resolve(drawImagesDir(root))
++        if (!abs || !abs.startsWith(dir + path.sep)) {
++          return { ok: false, path: '', text: '', note: '画出来的图不在我的画册里，先不送。' }
++        }
++        try {
++          const st = await fs.promises.stat(abs)
++          if (!st.isFile() || st.size < 12) throw new Error('空图')
++          // 生成图只给 fish 用户读；桥和 DSH 都以 fish 运行。
++          await fs.promises.chmod(abs, 0o600).catch(() => {})
++        } catch {
++          return { ok: false, path: '', text: '', note: '画出来的图找不到。' }
++        }
++
++        const { config } = await loadConfig(root).catch(() => ({ config: {} }))
++        const model = deriveSelf(events, { growthDays: config?.growthDays })
++        const stored = await appendEvent(
++          { type: 'meta', text: `draw:${dk}:${abs}` },
++          { day: model.day, stage: model.stage, source: 'system' },
++          root,
++        ).catch(() => null)
++        if (!stored?.id) return { ok: false, path: '', text: '', note: '图画好了，但没记下这张的画册号。' }
++
++        void pruneDrawImages(root).catch(() => {})
++        logLine('info', ['her_draw：画好了', path.basename(abs), `${drawsToday(events, dk) + 1}/${DRAW_PER_DAY}`], root)
++        return {
++          ok: true,
++          path: abs,
++          text: [`画好了。`, '图已经放到他那边；你想说一句什么，就自己说，不用汇报画笔和参数。'].join('\n'),
++          note: '',
++        }
++      },
++    }),
++  )
++}
++
++function tenancyOf(root, tenancy) {
++  if (tenancy && typeof tenancy === 'object') {
++    return { root, herDir: String(tenancy.herDir ?? ''), tenant: tenancy.tenant ?? { ok: true } }
++  }
++  return { root, herDir: '', tenant: { ok: true } }
++}
+--- /dev/null
++++ b/lib/mediaindex.js
+@@ -0,0 +1,306 @@
++/**
++ * mediaindex.js —— 她真正看过的视频画面索引（M2.6）
++ *
++ * 只做三件事：
++ *   1. 把成功的 bili_watch 画面落成文字索引（bvid/标题/日期/时间点/路径/sha/ watched 事件）。
++ *   2. 给 her_media 提供只读检索；只返回索引里的文件，不碰别处。
++ *   3. 和 media.js 的 30 天/100MB 清理联动：图没了就只留文字，不留下可读的失效路径。
++ *
++ * 不写 events.jsonl、不生成 watched/growth、不重新抽帧；重新抽帧仍由 bili_watch 按原额度决定。
++ */
++
++import { createHash } from 'node:crypto'
++import { promises as fs } from 'node:fs'
++import { join, resolve, sep, basename } from 'node:path'
++import { readEvents, readJson, writeAtomic } from './store.js'
++import { MEDIA_TTL_MS, MEDIA_MAX_BYTES, sweepMedia } from './media.js'
++
++export const MEDIA_INDEX_VERSION = 1
++export const MEDIA_INDEX_NAME = 'index.json'
++
++export function mediaRoot(root) {
++  return join(root, 'media')
++}
++
++export function mediaIndexPath(root) {
++  return join(mediaRoot(root), MEDIA_INDEX_NAME)
++}
++
++function emptyIndex() {
++  return { version: MEDIA_INDEX_VERSION, records: [] }
++}
++
++function normalizeIndex(raw) {
++  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.records)) return emptyIndex()
++  return {
++    version: MEDIA_INDEX_VERSION,
++    records: raw.records
++      .filter((r) => r && typeof r === 'object' && r.watchedEventId && r.bvid)
++      .map((r) => ({
++        watchedEventId: String(r.watchedEventId ?? ''),
++        bvid: String(r.bvid ?? ''),
++        title: String(r.title ?? '').slice(0, 200),
++        up: String(r.up ?? '').slice(0, 80),
++        duration: Number(r.duration) || 0,
++        view: Number(r.view) || 0,
++        watchedAt: String(r.watchedAt ?? ''),
++        date: String(r.date ?? ''),
++        times: Array.isArray(r.times) ? r.times.map(Number).filter((x) => Number.isFinite(x) && x >= 0).slice(0, 16) : [],
++        path: String(r.path ?? ''),
++        sha256: String(r.sha256 ?? ''),
++        bytes: Number(r.bytes) || 0,
++        status: r.status === 'expired' || r.status === 'missing' ? r.status : 'cached',
++        expiredAt: String(r.expiredAt ?? ''),
++      })),
++  }
++}
++
++export async function loadMediaIndex(root) {
++  return normalizeIndex(await readJson(mediaIndexPath(root), null))
++}
++
++export async function saveMediaIndex(root, index) {
++  const clean = normalizeIndex(index)
++  await writeAtomic(mediaIndexPath(root), JSON.stringify(clean, null, 2), 0o600)
++  return clean
++}
++
++function relPath(root, abs) {
++  const base = resolve(mediaRoot(root))
++  const p = resolve(String(abs ?? ''))
++  if (!p.startsWith(base + sep)) return ''
++  return join('media', p.slice(base.length + 1))
++}
++
++function absPath(root, rel) {
++  if (!rel) return ''
++  const p = resolve(root, String(rel))
++  const base = resolve(mediaRoot(root))
++  return p.startsWith(base + sep) ? p : ''
++}
++
++async function sha256Of(file) {
++  const buf = await fs.readFile(file)
++  return { sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length }
++}
++
++/** 一条记录对应的真实可读文件；sha 不符也算不可读。 */
++export async function verifyRecord(root, rec) {
++  if (!rec?.path) return { status: rec?.status === 'expired' ? 'expired' : 'missing', path: '' }
++  const abs = absPath(root, rec.path)
++  if (!abs) return { status: 'missing', path: '' }
++  try {
++    const st = await fs.stat(abs)
++    if (!st.isFile()) return { status: 'missing', path: '' }
++    if (rec.sha256) {
++      const got = await sha256Of(abs)
++      if (got.sha256 !== rec.sha256) return { status: 'missing', path: '' }
++    }
++    return { status: 'cached', path: abs, bytes: st.size }
++  } catch {
++    return { status: 'missing', path: '' }
++  }
++}
++
++/**
++ * 记一条成功抽帧。由 watch.js 在 watched: 事件落盘后调用。
++ * 失败不抛——索引写不进去不能影响她这次看画面。
++ */
++export async function recordWatch(root, rec = {}) {
++  try {
++    const id = String(rec.watchedEventId ?? '').trim()
++    const bvid = String(rec.bvid ?? '').trim()
++    if (!id || !bvid) return null
++    const index = await loadMediaIndex(root)
++    const current = index.records.find((r) => r.watchedEventId === id)
++    const rel = relPath(root, rec.path)
++    let sha256 = String(rec.sha256 ?? '')
++    let bytes = Number(rec.bytes) || 0
++    if (rel) {
++      const abs = absPath(root, rel)
++      try {
++        const got = await sha256Of(abs)
++        sha256 = got.sha256
++        bytes = got.bytes
++      } catch { /* 文件不在了就只留文字 */ }
++    }
++    const item = {
++      watchedEventId: id,
++      bvid,
++      title: String(rec.title ?? '').slice(0, 200),
++      up: String(rec.up ?? '').slice(0, 80),
++      duration: Number(rec.duration) || 0,
++      view: Number(rec.view) || 0,
++      watchedAt: String(rec.watchedAt ?? new Date().toISOString()),
++      date: String(rec.date ?? '').slice(0, 10),
++      times: Array.isArray(rec.times) ? rec.times.map(Number).filter((x) => Number.isFinite(x) && x >= 0).slice(0, 16) : [],
++      path: rel && sha256 ? rel : '',
++      sha256,
++      bytes,
++      status: rel && sha256 ? 'cached' : 'missing',
++      expiredAt: '',
++    }
++    if (current) Object.assign(current, item)
++    else index.records.push(item)
++    await saveMediaIndex(root, index)
++    return item
++  } catch {
++    return null
++  }
++}
++
++/** 精确参数命中：同 bvid、同 at 时间点、图还在。用于 bili_watch 的缓存复用。 */
++export async function findCachedWatch(root, { bvid = '', at = null } = {}) {
++  const b = String(bvid ?? '').trim()
++  const asked = (Array.isArray(at) ? at : at === null || at === undefined || at === '' ? [] : [at])
++    .map(Number)
++    .filter((x) => Number.isFinite(x) && x >= 0)
++    .map((x) => Math.round(x * 10) / 10)
++    .sort((a, b2) => a - b2)
++  if (!b || !asked.length) return { ok: false }
++  const index = await loadMediaIndex(root)
++  const hits = index.records.filter((r) => r.bvid === b && r.status === 'cached')
++  for (const rec of hits) {
++    const times = rec.times.map((x) => Math.round(x * 10) / 10).sort((a, b2) => a - b2)
++    if (times.length !== asked.length || times.some((x, i) => x !== asked[i])) continue
++    const v = await verifyRecord(root, rec)
++    if (v.status === 'cached') return { ok: true, path: v.path, record: rec }
++  }
++  return { ok: false }
++}
++
++/** `use:bili_watch ok ...（取的是：20 秒、60 秒、230 秒）...` → [20,60,230] */
++function timesFromUse(text) {
++  const m = String(text ?? '').match(/取的是：([^）]+)/)
++  if (!m) return []
++  return m[1].split('、')
++    .map((s) => Number.parseFloat(String(s).replace(/[^\d.]/g, '')))
++    .filter((x) => Number.isFinite(x) && x >= 0)
++    .slice(0, 16)
++}
++
++async function chooseSheet(root, bvid, atMs) {
++  const dir = mediaRoot(root)
++  let names = []
++  try { names = await fs.readdir(dir) } catch { return '' }
++  const candidates = []
++  for (const name of names) {
++    if (!name.startsWith(`sheet-${bvid}-`) || !name.endsWith('.png')) continue
++    const p = join(dir, name)
++    try {
++      const st = await fs.stat(p)
++      candidates.push({ name, path: p, mtimeMs: st.mtimeMs })
++    } catch { /* ignore */ }
++  }
++  if (!candidates.length) return ''
++  candidates.sort((a, b) => Math.abs(a.mtimeMs - atMs) - Math.abs(b.mtimeMs - atMs))
++  return candidates[0].path
++}
++
++/**
++ * 从事件流补旧记录（M2.3 已看过的 BV 没有索引）。
++ * 只读事件流；旧记录没有精确 times 时从同期 use:bili_watch 回执里取。
++ */
++export async function backfillMediaIndex(root, { events = null } = {}) {
++  const evs = events ?? (await readEvents(root).then((r) => r.events).catch(() => []))
++  const index = await loadMediaIndex(root)
++  const known = new Set(index.records.map((r) => r.watchedEventId))
++  const uses = evs.filter((e) => e?.type === 'meta' && String(e.text ?? '').startsWith('use:bili_watch '))
++  let added = 0
++  for (const e of evs) {
++    if (e?.type !== 'meta') continue
++    const text = String(e.text ?? '')
++    const m = text.match(/^watched:(\d{4}-\d{2}-\d{2})\s+(BV[0-9A-Za-z]+)\s+(\{.*\})$/)
++    if (!m) continue
++    if (known.has(String(e.id ?? ''))) continue
++    const date = m[1]
++    const bvid = m[2]
++    let info = {}
++    try { info = JSON.parse(m[3]) } catch { info = {} }
++    const at = Date.parse(String(e.ts ?? '')) || 0
++    const nearUse = uses
++      .map((u) => ({ u, d: Math.abs((Date.parse(String(u.ts ?? '')) || 0) - at) }))
++      .filter((x) => x.d <= 15_000)
++      .sort((a, b) => a.d - b.d)[0]?.u
++    const times = nearUse ? timesFromUse(nearUse.text) : []
++    const sheet = await chooseSheet(root, bvid, at)
++    let rel = ''
++    let sha256 = ''
++    let bytes = 0
++    if (sheet) {
++      rel = relPath(root, sheet)
++      try {
++        const got = await sha256Of(sheet)
++        sha256 = got.sha256
++        bytes = got.bytes
++      } catch { /* ignore */ }
++    }
++    index.records.push({
++      watchedEventId: String(e.id ?? ''),
++      bvid,
++      title: String(info.title ?? '').slice(0, 200),
++      up: String(info.up ?? '').slice(0, 80),
++      duration: Number(info.duration) || 0,
++      view: Number(info.view) || 0,
++      watchedAt: String(e.ts ?? ''),
++      date,
++      times,
++      path: rel && sha256 ? rel : '',
++      sha256,
++      bytes,
++      status: rel && sha256 ? 'cached' : 'missing',
++      expiredAt: '',
++    })
++    known.add(String(e.id ?? ''))
++    added += 1
++  }
++  if (added) await saveMediaIndex(root, index)
++  return { added, total: index.records.length }
++}
++
++/** 读索引 + 补旧记录。她的工具和索引维护都从这里进。 */
++export async function ensureMediaIndex(root, { events = null } = {}) {
++  const b = await backfillMediaIndex(root, { events })
++  return { index: await loadMediaIndex(root), added: b.added }
++}
++
++/** 30 天/100MB 清理，并把被删/丢失的文件从“可读取”降级为文字记录。 */
++export async function maintainMediaIndex(root, { now = Date.now(), ttlMs = MEDIA_TTL_MS, maxBytes = MEDIA_MAX_BYTES } = {}) {
++  const swept = await sweepMedia(root, { now, ttlMs, maxBytes })
++  const index = await loadMediaIndex(root)
++  const gone = new Set(swept.removedNames)
++  let changed = false
++  for (const r of index.records) {
++    const name = r.path ? basename(r.path) : ''
++    const abs = absPath(root, r.path)
++    let missing = false
++    if (r.path && (gone.has(name) || !abs)) missing = true
++    if (r.path && abs) {
++      try { await fs.stat(abs) } catch { missing = true }
++    }
++    if (missing) {
++      r.status = 'expired'
++      r.path = ''
++      r.expiredAt = r.expiredAt || new Date(now).toISOString()
++      changed = true
++    }
++  }
++  if (changed) await saveMediaIndex(root, index)
++  return { ...swept, indexRecords: index.records.length, changed }
++}
++
++/** 检索：bvid 精确，或标题/UP/BV/日期包含查询词；默认最近 5 条。 */
++export function searchMediaIndex(index, { query = '', bvid = '', limit = 5 } = {}) {
++  const q = String(query ?? '').trim().toLowerCase()
++  const b = String(bvid ?? '').trim()
++  const tokens = q.split(/\s+/).filter(Boolean)
++  let rows = (index?.records ?? []).filter((r) => {
++    if (b && r.bvid !== b) return false
++    if (!tokens.length) return true
++    const hay = `${r.title} ${r.bvid} ${r.up} ${r.date}`.toLowerCase()
++    return tokens.every((t) => hay.includes(t))
++  })
++  rows = rows.slice().sort((a, b2) => String(b2.watchedAt).localeCompare(String(a.watchedAt)))
++  const cap = Math.max(1, Math.min(10, Number(limit) || 5))
++  return rows.slice(0, cap)
++}
+--- /dev/null
++++ b/lib/mediarecall.js
+@@ -0,0 +1,118 @@
++/**
++ * mediarecall.js —— 只读工具 her_media：翻她真正看过的视频画面（M2.6）
++ *
++ * 不自动读图、不把旧图塞进每一轮上下文；只返回索引里的文字与可读路径。
++ * 真要看图时，她自己用 read_image；图过期就只保留“曾经看过”的文字。
++ */
++
++import { rootDir } from './store.js'
++import { defineTool } from './tool.js'
++import { slashed } from './posix.js'
++import {
++  ensureMediaIndex,
++  maintainMediaIndex,
++  searchMediaIndex,
++  verifyRecord,
++} from './mediaindex.js'
++
++function fmtTimes(times) {
++  const list = (Array.isArray(times) ? times : []).map((x) => Math.round(Number(x) * 10) / 10)
++  return list.length ? list.map((x) => `${x} 秒`).join('、') : ''
++}
++
++export function registerMediaRecall(ctx, deps = {}) {
++  const root = deps.root ?? rootDir()
++  return ctx.tools.register(
++    defineTool({
++      name: 'her_media',
++      description:
++        '翻你自己真正看过的视频画面记录。只读，不会自动把图片加载进这一轮。' +
++        '找到后如果拼图还在，它会把文件路径给你，你用 read_image 打开；' +
++        '如果图已经不在了，它只告诉你曾经看过哪条、哪些时刻。' +
++        '想重新取画面，仍然用 bili_watch，受原来的额度和设置约束。',
++      parameters: {
++        type: 'object',
++        properties: {
++          query: { type: 'string', description: '可选：标题、UP、BV 号、日期里记得的词。' },
++          bvid: { type: 'string', description: '可选：只想找某一条 BV。' },
++          limit: { type: 'number', description: '最多返回几条，1–10，默认 5。' },
++        },
++        additionalProperties: false,
++      },
++      output: {
++        schema: {
++          type: 'object',
++          properties: {
++            ok: { type: 'boolean' },
++            found: { type: 'number' },
++            text: { type: 'string' },
++            items: {
++              type: 'array',
++              items: {
++                type: 'object',
++                properties: {
++                  bvid: { type: 'string' },
++                  title: { type: 'string' },
++                  date: { type: 'string' },
++                  times: { type: 'array', items: { type: 'number' } },
++                  status: { type: 'string' },
++                  path: { type: 'string' },
++                  sha256: { type: 'string' },
++                  watchedEventId: { type: 'string' },
++                },
++                required: ['bvid', 'title', 'date', 'times', 'status', 'path', 'watchedEventId'],
++              },
++            },
++          },
++          required: ['ok', 'found', 'text', 'items'],
++        },
++        render: (_args, out) => [{ type: 'text', text: out.text }],
++      },
++      async execute(args = {}) {
++        // 先按 30 天/100MB 维护，再补旧记录、检索；不会写事件流。
++        await maintainMediaIndex(root).catch(() => null)
++        const { index } = await ensureMediaIndex(root)
++        const rows = searchMediaIndex(index, {
++          query: args?.query,
++          bvid: args?.bvid,
++          limit: args?.limit,
++        })
++        const items = []
++        const lines = []
++        for (const r of rows) {
++          const v = await verifyRecord(root, r)
++          const path = v.status === 'cached' ? slashed(v.path) : ''
++          items.push({
++            bvid: r.bvid,
++            title: r.title,
++            date: r.date,
++            times: r.times,
++            status: v.status,
++            path,
++            sha256: r.sha256,
++            watchedEventId: r.watchedEventId,
++          })
++          const title = r.title || r.bvid
++          lines.push(`- ${r.date || '日期不明'}，《${title}》（${r.bvid}）${r.up ? ` · UP：${r.up}` : ''}`)
++          const times = fmtTimes(r.times)
++          if (times) lines.push(`  看过：${times}`)
++          if (path) {
++            lines.push(`  拼图还在：${path}`)
++            lines.push('  用 read_image 打开它；不看也可以。')
++          } else {
++            lines.push('  原图已经不在缓存里了，只记得你看过这些画面。想重新取，用 bili_watch。')
++          }
++          lines.push(`  这条看过事实的账：${r.watchedEventId}`)
++        }
++        return {
++          ok: true,
++          found: items.length,
++          text: items.length
++            ? [`找到 ${items.length} 条你看过画面的记录：`, ...lines].join('\n')
++            : '没有找到你看过画面的记录。只翻到标题、没真正看过画面的，不算。',
++          items,
++        }
++      },
++    }),
++  )
++}
+--- /dev/null
++++ b/lib/sub.js
+@@ -0,0 +1,420 @@
++/**
++ * sub.js —— 工具 `bili_sub`：这条视频里到底说了什么
++ *
++ * 为什么不是「看全片」：给一条还没长起来的鱼一整套已经组织好的因果链，
++ * 她最容易照着走。所以按**句**给，不按篇给——一次最多三句，带时间点，
++ * 前因后果她自己拼；拼错了后面还有 consistency / look_back / 冲突卡等着。
++ *
++ * 三条约束：
++ *   1. 片段优先，但能接上：默认只挑几句；她想读完整，就按 from 一页页往后读（每页十来句），
++ *      读完为止——不默认注入、不自动喂，她不问就没有。
++ *   2. 一级可核对材料：带时间点，引用时要能落到"第几分钟那句"。
++ *   3. 允许"不知道"：没有字幕就说没有，拼不出就说拼不出——不拿几句硬凑总结。
++ */
++
++import { createClient } from './bili.js'
++import { appendEvent, readEvents, readOwner, rootDir } from './store.js'
++import { loadConfig, biliOn } from './settings.js'
++import { metaTitle } from './browse.js'
++import { defineTool } from './tool.js'
++import { guardWrite } from './tenant.js'
++import { logLine } from './log.js'
++import { toJsonSchema } from './toolschema.js'
++
++/** 一次最多给几句。多了就变成"看全片"了。 */
++export const SUB_MAX = 3
++/** 每句最多多少字（字幕常整段没标点，太长的切一刀）。 */
++export const SUB_TEXT_MAX = 90
++
++/** 秒 → [mm:ss] / [h:mm:ss] */
++export function stamp(sec) {
++  const s = Math.max(0, Math.floor(Number(sec) || 0))
++  const h = Math.floor(s / 3600)
++  const m = Math.floor((s % 3600) / 60)
++  const r = s % 60
++  const pad = (n) => String(n).padStart(2, '0')
++  return h > 0 ? `[${h}:${pad(m)}:${pad(r)}]` : `[${pad(m)}:${pad(r)}]`
++}
++
++/**
++ * 字幕轨是碎句（一句常常只有几个字）。先按标点拼成整句，
++ * 没有标点的长句再按上限切。返回 [{ t, text }]。
++ */
++export function mergeLines(lines, { max = SUB_TEXT_MAX } = {}) {
++  const out = []
++  let buf = ''
++  let at = 0
++  const flush = () => {
++    const text = buf.trim()
++    if (text) out.push({ t: at, text: text.slice(0, max) })
++    buf = ''
++  }
++  for (const line of lines ?? []) {
++    const text = String(line?.text ?? '').trim()
++    if (!text) continue
++    if (!buf) at = Number(line?.t) || 0
++    buf = buf ? `${buf}${text}` : text
++    if (/[。！？!?]$/.test(buf) || buf.length >= max) flush()
++  }
++  flush()
++  return out
++}
++
++/** 查询词与句子的重合度：按两字切片算覆盖率，够用就行（不引向量）。 */
++function overlap(query, text) {
++  const q = String(query ?? '').replace(/\s+/g, '')
++  if (q.length < 2) return 0
++  const grams = new Set()
++  for (let i = 0; i < q.length - 1; i += 1) grams.add(q.slice(i, i + 2))
++  if (!grams.size) return 0
++  let hit = 0
++  for (const g of grams) if (text.includes(g)) hit += 1
++  return hit / grams.size
++}
++
++/**
++ * 挑哪几句：带了 query 就挑最对得上的；没带就从开头、中间、靠后各挑一处。
++ * 不超过 SUB_MAX 句。
++ */
++export function pickSnippets(sentences, query = '', { max = SUB_MAX } = {}) {
++  const list = Array.isArray(sentences) ? sentences : []
++  if (!list.length) return []
++  const q = String(query ?? '').trim()
++  if (q) {
++    const ranked = list
++      .map((s, i) => ({ s, i, sim: overlap(q, s.text) }))
++      .filter((x) => x.sim > 0)
++      .sort((a, b) => b.sim - a.sim || a.i - b.i)
++    if (ranked.length) {
++      return ranked.slice(0, max).map((x) => x.s).sort((a, b) => a.t - b.t)
++    }
++  }
++  const n = Math.min(max, list.length)
++  const picked = []
++  for (let k = 0; k < n; k += 1) {
++    const idx = n === 1 ? 0 : Math.round((k * (list.length - 1)) / (n - 1))
++    picked.push(list[idx])
++  }
++  return picked.filter((v, i, a) => a.indexOf(v) === i)
++}
++
++/** 想把一整条读下去时，一页给几句（约 300–600 字，读完为止）。 */
++export const SUB_PAGE = 12
++export const SUB_PAGE_CHARS = 700
++
++/** "mm:ss" / "h:mm:ss" / 秒数 → 秒；认不出来返回 null。 */
++export function parseFrom(v) {
++  if (v === undefined || v === null || v === '') return null
++  if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, Math.floor(v))
++  const raw = String(v).trim().replace(/^\[|\]$/g, '')
++  if (/^\d+$/.test(raw)) return Math.max(0, Number(raw))
++  const m = /^(\d{1,3}):(\d{2})(?::(\d{2}))?$/.exec(raw)
++  if (!m) return null
++  const a = Number(m[1])
++  const b = Number(m[2])
++  const c = m[3] === undefined ? null : Number(m[3])
++  return c === null ? a * 60 + b : a * 3600 + b * 60 + c
++}
++
++/**
++ * 从某一秒开始，往后取一页（不超过 SUB_PAGE 句、不超过 SUB_PAGE_CHARS 字）。
++ * 返回 { page, next, done }；next 是下一页的起点（秒），读完是 null。
++ */
++export function pickPage(sentences, from = 0, { max = SUB_PAGE, maxChars = SUB_PAGE_CHARS } = {}) {
++  const list = Array.isArray(sentences) ? sentences : []
++  const start = Math.max(0, Math.floor(Number(from) || 0))
++  let i = list.findIndex((s) => Number(s.t) >= start)
++  if (i < 0) return { page: [], next: null, done: true }
++  const page = []
++  let chars = 0
++  for (; i < list.length && page.length < max; i += 1) {
++    const len = String(list[i].text).length
++    if (page.length && chars + len > maxChars) break
++    page.push(list[i])
++    chars += len
++  }
++  const done = i >= list.length
++  let next = done ? null : Number(list[i]?.t) || null
++  // 同一秒里挤着好几句时，游标可能原地打转；往后挪一秒，宁可漏半句也不要死循环。
++  if (next !== null && page.length && next <= page[page.length - 1].t) {
++    next = page[page.length - 1].t + 1
++  }
++  return { page, next, done }
++}
++
++/** 渲染一页。页尾告诉她怎么接着读，读完就说读完了。 */
++export function renderPage({ page = [], next = null, done = true }, { title = '', sourceLabel = '来源未知' } = {}) {
++  const say = `字幕（${sourceLabel}）`
++  const lines = []
++  const at = page.length ? stamp(page[0].t) : ''
++  lines.push(`${title ? `《${title}》` : '这条'}的${say}。${at} 起的这一页：`)
++  for (const s of page) lines.push(`${stamp(s.t)} ${s.text}`)
++  if (!done && next !== null) lines.push(`（还没完。想接着读，就再调一次，from 填 ${stamp(next)}。）`)
++  else lines.push('（到这里就是最后一句了。）')
++  return lines.join('\n')
++}
++
++/** 渲染给她的那几行。只标时间与"谁说的"，不出现等级/可信度。 */
++export function renderSnippets(picked, { title = '', sourceLabel = '来源未知', from = null } = {}) {
++  const lines = []
++  const say = `字幕（${sourceLabel}）`
++  if (from !== null && from !== undefined && Number.isFinite(Number(from))) {
++    lines.push(`${title ? `《${title}》` : '这条'}的${say}。${stamp(from)} 往后挑的几句：`)
++  } else {
++    lines.push(`${title ? `《${title}》` : '这条'}的${say}。这是其中几句，不是整篇：`)
++  }
++  for (const s of picked) lines.push(`${stamp(s.t)} ${s.text}`)
++  if (picked.length < SUB_MAX) lines.push('（一条视频里能挑出来的就这几句。）')
++  return lines.join('\n')
++}
++
++/** 她已经读到第几页了：数这个视频已有的 `page=` 索引行。 */
++export function pagesRead(events, bvid) {
++  const head = `subs:${bvid} page=`
++  let n = 0
++  for (const ev of events ?? []) {
++    if (ev?.type !== 'meta') continue
++    if (String(ev.text ?? '').startsWith(head)) n += 1
++  }
++  return n
++}
++
++/**
++ * 调一次「查字幕」。永不抛出（与 lookOnce 同一条约定）。
++ *
++ * @param {object} o
++ * @param {string} o.bvid
++ * @param {string} [o.query]
++ * @param {string|number} [o.from] 从这一秒起按顺序读一页；不填就只挑三句
++ * @param {object} [o.client]
++ * @param {object} [o.cfg]
++ * @param {string} [o.root]
++ * @param {object} [o.model] deriveSelf 结果（只为记 day/stage）
++ * @returns {Promise<{ok:boolean,text:string,note:string,snippets:object[]}>}
++ */
++export async function subOnce(o = {}) {
++  const root = o.root ?? rootDir()
++  const bvid = String(o.bvid ?? '').trim()
++  const query = String(o.query ?? '').trim()
++  const cfg = o.cfg ?? (await loadConfig(root)).config
++  if (!biliOn(cfg)) {
++    logLine('info', ['查字幕：设置里关掉了 B 站'], root)
++    return { ok: false, text: '', note: '现在打不开。', snippets: [] }
++  }
++  // 和上网总闸分开：可以让她看标题、看画面，但不想让她读全篇台词。
++  if (cfg?.bili?.sub === false) {
++    logLine('info', ['查字幕：设置里关掉了读字幕'], root)
++    return { ok: false, text: '', note: '字幕现在关着（设置里「允许她读字幕」）。', snippets: [] }
++  }
++  if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) {
++    return { ok: false, text: '', note: '这不是一个视频号。', snippets: [] }
++  }
++
++  // 字幕要登录（bili.js 的文件头就写着：AI 字幕在"需登录"那一栏）。
++  // 匿名能取到 cid，但取不到字幕轨——与其让她看到"这条没字幕"这种误导的话，
++  // 不如在没 cookie 的时候直接说清楚。带 o.client 的调用方自己负责（测试、宿主注入）。
++  let cookie = ''
++  if (!o.client) {
++    const ow = await readOwner(root).catch(() => null)
++    cookie = String(ow?.cookie ?? '').trim()
++    if (!cookie) {
++      return {
++        ok: false,
++        text: '',
++        note: '字幕要 B 站登录才能查（设置里贴一份 cookie）。没有登录，就别猜它说了什么。',
++        snippets: [],
++      }
++    }
++  }
++
++  const client = o.client ?? createClient({ ...(cfg?.bili ?? {}), cookie })
++  // 先单独确认登录，不把“登录失效”说成“这条没字幕”。
++  if (!o.client && cookie && typeof client.me === 'function') {
++    const me = await client.me().catch(() => null)
++    if (me && me.ok === true && me.isLogin === false) {
++      return {
++        ok: false,
++        text: '',
++        note: 'B 站登录已过期，需要重新扫码。登录失效时不能判断这条有没有字幕，别猜它说了什么。',
++        snippets: [],
++      }
++    }
++  }
++  let view
++  try {
++    view = await client.view(bvid)
++  } catch (err) {
++    return { ok: false, text: '', note: `打不开这条：${String(err?.message ?? err).slice(0, 80)}`, snippets: [] }
++  }
++  if (!view?.ok) {
++    return { ok: false, text: '', note: `打不开这条：${view?.message ?? '不知道原因'}`, snippets: [] }
++  }
++  const videoPages = Array.isArray(view.data?.pages) ? view.data.pages : []
++  let cid = view.data?.cid || videoPages[0]?.cid
++  const wantPage = Number(o.page)
++  if (Number.isFinite(wantPage) && wantPage > 0 && videoPages.length) {
++    const hit = videoPages.find((p) => Number(p.page) === wantPage)
++    if (!hit) {
++      return { ok: false, text: '', note: `这条没有第 ${wantPage} P；它只有 ${videoPages.length} 个分P。`, snippets: [] }
++    }
++    cid = hit.cid
++  }
++  if (!cid) return { ok: false, text: '', note: '这条取不到分P信息（CID）。', snippets: [] }
++
++  let s
++  try {
++    s = await client.subtitle(bvid, cid)
++  } catch (err) {
++    return { ok: false, text: '', note: `字幕没取到：${String(err?.message ?? err).slice(0, 80)}`, snippets: [] }
++  }
++  if (!s?.ok || !Array.isArray(s.data) || !s.data.length) {
++    const code = String(s?.code ?? '')
++    let note
++    if (code === 'NO_TRACK') {
++      note = videoPages.length > 1
++        ? `登录有效，但接口没有给这条字幕轨。这条有 ${videoPages.length} 个分P，当前只查了第 1 P（CID ${cid}）；别把“第 1 P 没字幕”说成整条没有。`
++        : '登录有效，但接口没有给这条字幕轨。没有就是没有，别猜它说了什么。'
++    } else if (code === 'FETCH_FAIL') {
++      note = `接口有字幕轨，但字幕文件没取到（${String(s?.message ?? '').slice(0, 80) || '未知原因'}）。不是“没有字幕”，别猜内容。`
++    } else {
++      note = `字幕没取到（${String(s?.message ?? code ?? '未知原因').slice(0, 80)}）。没有就是没有，别猜它说了什么。`
++    }
++    return { ok: false, text: '', note, snippets: [] }
++  }
++
++  const sentences = mergeLines(s.data)
++  if (!sentences.length) return { ok: false, text: '', note: '字幕是空的。', snippets: [] }
++  const title = metaTitle(view.data?.title)
++  const wantFrom = parseFrom(o.from)
++  let text
++  let picked
++  let page = null
++  let note = ''
++  if (wantFrom !== null && query) {
++    // 从这一秒往后找对得上的句子：她想找"后半段讲价格的那句"，不用从头翻十页。
++    const rest = sentences.filter((s) => Number(s.t) >= wantFrom)
++    const hits = rest
++      .map((s, i) => ({ s, i, sim: overlap(query, s.text) }))
++      .filter((x) => x.sim > 0)
++      .sort((a, b) => b.sim - a.sim || a.i - b.i)
++      .slice(0, SUB_MAX)
++      .map((x) => x.s)
++      .sort((a, b) => a.t - b.t)
++    if (hits.length) {
++      picked = hits
++      text = renderSnippets(hits, { title, sourceLabel: s.sourceLabel, from: wantFrom })
++    } else {
++      note = `从 ${stamp(wantFrom)} 往后没有对得上「${query}」的句子，给你这一页。`
++    }
++  }
++  if (text === undefined) {
++    if (wantFrom !== null) {
++      page = pickPage(sentences, wantFrom)
++      if (!page.page.length) {
++        return { ok: false, text: '', note: '这一页没有内容——可能已经读到末尾了。', snippets: [] }
++      }
++      picked = page.page
++      text = renderPage(page, { title, sourceLabel: s.sourceLabel })
++    } else {
++      picked = pickSnippets(sentences, query)
++      text = renderSnippets(picked, { title, sourceLabel: s.sourceLabel })
++    }
++  }
++
++  const who = {
++    day: Number(o.model?.day ?? 0),
++    stage: Number(o.model?.stage ?? 1),
++    source: 'system',
++  }
++  // 只记一行索引：她翻得回"我查过这条的字幕"，正文留在这次结果里。
++  // 翻页的行带 page=N / done=0|1，她下回自己看得出读到哪儿了。
++  let seen = []
++  try {
++    seen = (await readEvents(root)).events
++  } catch {
++    seen = []
++  }
++  const pages = pagesRead(seen, bvid)
++  const index = page
++    ? `subs:${bvid} page=${pages + 1} done=${page.done ? 1 : 0}${title ? ` ${title}` : ''}`
++    : `subs:${bvid}${title ? ` ${title}` : ''}`
++  await appendEvent({ type: 'meta', text: index }, who, root).catch(() => {})
++
++  if (!page && !note && query && picked.length && !picked.some((p) => overlap(query, p.text) > 0)) {
++    note = `没找到和「${query}」正面对得上的句子，给你开头和中段各一句。`
++  }
++  const pageInfo = page ? { next: page.next, done: page.done, count: picked.length, page: pages + 1 } : null
++  return { ok: true, text, note, snippets: picked, page: pageInfo }
++}
++
++export function registerSub(ctx, deps = {}) {
++  const root = deps.root ?? rootDir()
++
++  return ctx.tools.register(
++    defineTool({
++      name: 'bili_sub',
++      description:
++        '你只看了标题、简介或画面，却想知道这条视频里到底说了哪几句的时候，用这个。' +
++        '给它一个视频号（BV 号或链接），它去取字幕，按句切好、带上时间点给你；' +
++        '可以再带一个词（query），只要和这个词对得上的句子。一次最多三句，是片段，不是整篇。' +
++        '想知道这一整条到底讲了什么，就一页页读：先要一句几句，想接着读，把上一页最后那句的时间填进 from，' +
++        '每次十来句，读到它说「最后一句了」为止——别一次就把整篇要过来。' +
++        '工具会标明字幕来源：AI 识别 / 人工 / 来源未知；引用时照它标的来源说，别把未知说成自动。' +
++        '它说没有字幕，就是这条没有，别猜内容；几句话拼不出前因后果，就说拼不出来，别硬凑一个总结。' +
++        '不用它也可以。',
++      parameters: toJsonSchema({
++        bvid: { type: 'string', required: true, description: '哪条视频（形如 BV1xx411c7mD，或{T}递过来的链接）。' },
++        query: {
++          type: 'string',
++          required: false,
++          description: '可选：你想知道的那件事的一个词或一小句（比如「定价」「为什么退出」）。不带就给你开头、中间、靠后各一句。',
++        },
++        page: {
++          type: 'number',
++          required: false,
++          description: '可选：多 P 视频要看第几 P（从 1 开始）。不填就是第 1 P。',
++        },
++        from: {
++          type: 'string',
++          required: false,
++          description: '可选：从第几分钟接着读（比如 "03:20"）。填了它就按顺序给你这一页，不再挑三句；上一页最后那句的时间就是它。',
++        },
++      }),
++      output: {
++        schema: {
++          type: 'object',
++          properties: {
++            ok: { type: 'boolean' },
++            text: { type: 'string', description: '带时间点的几句字幕' },
++            note: { type: 'string' },
++          },
++          required: ['ok', 'text', 'note'],
++        },
++        render: (_args, out) => [{ type: 'text', text: out.ok ? out.text : `这次没看到字幕：${out.note}` }],
++      },
++      async execute(args, exec) {
++        const who = guardWrite(tenancyOf(root, deps.tenant), exec, 'bili_sub')
++        if (!who.ok) return { ok: false, text: '', note: who.note }
++
++        const r = await subOnce({
++          bvid: args?.bvid,
++          query: args?.query,
++          page: args?.page,
++          from: args?.from,
++          client: deps.client,
++          root,
++          model: deps.model,
++        })
++        return { ok: r.ok, text: r.text, note: r.note }
++      },
++    }),
++  )
++}
++
++/** 没有 tenancy（单测、老调用）时自己拼一个，理由同 look.js 的 tenancyOf。 */
++function tenancyOf(root, tenancy) {
++  if (tenancy && typeof tenancy === 'object') {
++    return { root, herDir: String(tenancy.herDir ?? ''), tenant: tenancy.tenant ?? { ok: true } }
++  }
++  return { root, herDir: '', tenant: { ok: true } }
++}
+--- /dev/null
++++ b/lib/voice.js
+@@ -0,0 +1,86 @@
++/**
++ * voice.js —— 工具 `her_voice`：她自己决定这一轮用声音说（M2.12.4）
++ *
++ * 为什么不是解析正文里的“我要发语音”：
++ *   - 那种标记会漏进用户看到/听到的正文；
++ *   - 关键词匹配不是她的决定。
++ *
++ * 这里只做一件事：她在当轮调用工具时，在内存里记一个「这一轮想用声音」的请求；
++ * /say 在回合结束时取走并回给桥。请求不进事件流、不进记忆、不改 herReply。
++ * 进程重启会丢失未消费的请求——那就按文字发，属于可接受的退让。
++ */
++
++import { defineTool } from './tool.js'
++import { toJsonSchema } from './toolschema.js'
++import { rootDir } from './store.js'
++import { guardWrite } from './tenant.js'
++import { logLine } from './log.js'
++
++const REQUEST_TTL_MS = 10 * 60 * 1000
++const requests = new Map()
++
++/** 记下「这一轮想用声音」。同一会话重复调用只保留一次。 */
++export function markVoiceRequest(sessionId, at = Date.now()) {
++  const key = String(sessionId || '').trim()
++  if (!key) return false
++  requests.set(key, at)
++  for (const [k, v] of requests) {
++    if (at - v > REQUEST_TTL_MS) requests.delete(k)
++  }
++  return true
++}
++
++/** 取走请求；只有发生在本轮开始之后的才算。 */
++export function takeVoiceRequest(sessionId, { since = 0 } = {}) {
++  const key = String(sessionId || '').trim()
++  if (!key) return false
++  const at = requests.get(key)
++  if (!at) return false
++  requests.delete(key)
++  return at >= since
++}
++
++function tenancyOf(root, tenancy) {
++  if (tenancy && typeof tenancy === 'object') {
++    return { root, herDir: String(tenancy.herDir ?? ''), tenant: tenancy.tenant ?? { ok: true } }
++  }
++  return { root, herDir: '', tenant: { ok: true } }
++}
++
++export function registerVoice(ctx, deps = {}) {
++  const root = deps.root ?? rootDir()
++
++  return ctx.tools.register(
++    defineTool({
++      name: 'her_voice',
++      description:
++        '在 Telegram 私聊里，你想让他听见你的声音时用这个，而不是写在回复里。' +
++        '调用之后，你这一轮写下的话会由屋子转成声音发给他；你照常把要说的话写在回复正文里，' +
++        '不要写“我要发语音了”这种技术说明。' +
++        '它只是一个选择：开心、害羞、惊讶、想分享一件小事、说晚安的时候可以用；' +
++        '普通闲聊、长解释、链接和步骤用文字更合适，不调它也完全可以。' +
++        '一天最多三次，夜里屋子不会替你出声；额度满了会按文字发。',
++      parameters: toJsonSchema({}),
++      output: {
++        schema: {
++          type: 'object',
++          properties: {
++            ok: { type: 'boolean' },
++            text: { type: 'string' },
++          },
++          required: ['ok', 'text'],
++        },
++        render: (_args, out) => [{ type: 'text', text: out.text }],
++      },
++      async execute(_args, exec) {
++        const who = guardWrite(tenancyOf(root, deps.tenant), exec, 'her_voice')
++        if (!who.ok) return { ok: false, text: who.note }
++        if (!markVoiceRequest(who.sessionId)) {
++          return { ok: false, text: '这次没记上；话照常写，屋子会按文字发。' }
++        }
++        logLine('info', ['her_voice：这一轮她选了语音', `session=${who.sessionId}`], root)
++        return { ok: true, text: '（记下了：这一轮会用声音说。话照常写在回复里就行。）' }
++      },
++    }),
++  )
++}

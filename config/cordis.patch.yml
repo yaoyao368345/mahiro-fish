@@ -1,0 +1,17 @@
+# dsh profile 的用户补丁层。
+# 位置：$DSH_HOME/profiles/web/cordis.patch.yml
+# 在 bundle 自带的 patch 之后应用。
+#
+# 这里只固定两件事：DeepSeek 作为默认 provider、默认模型。
+# API Key 从 systemd 的 EnvironmentFile 读取（变量名 DEEPSEEK_API_KEY）。
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      deepseek:
+        apiKeyEnv: DEEPSEEK_API_KEY
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: deepseek
+    model: deepseek-flash
