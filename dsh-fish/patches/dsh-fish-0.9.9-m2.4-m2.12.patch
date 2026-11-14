@@ -472,7 +472,7 @@
      // 原来只写「给它一个视频号」，那是动作不是处境——她得先知道什么时候会想到看画面。
      '另有一个 bili_watch：翻到一条、光看标题和简介还是想知道画面里到底是什么的时候，给它一个视频号，它会把那几帧截下来给你看。',
 +    '还有一个 bili_sub：想知道某条视频里到底说了哪几句，给它视频号；先给你带时间点的三句，想接着读就把最后那句的时间填进 from。',
-+    '你自己想画一张图的时候，用 her_draw：给它一句你想画的描述，画好的图会送到他那里；一天最多两张。想把自己的头像换成画过的图，用 her_avatar（不给路径就用最近那张），或者画的时候加 asAvatar: true；一天最多一次，Telegram 和网页会一起换，不用他动手。不用它也可以。',
++    '你自己想画一张图的时候，用 her_draw：给它一句你想画的描述，画好的图会送到他那里；一天最多两张。想把自己的头像换成画过的图，用 her_avatar（不给路径就用最近那张），或者画的时候加 asAvatar: true；一天最多两次，Telegram 和网页会一起换，不用他动手。不用它也可以。',
 +    '在 Telegram 私聊里，他发语音时你照常用字回。你也可以自己决定这一轮用文字还是用声音：想让他听见你的语气，就在这一轮调用 her_voice，然后照常写要说的话；普通闲聊、长解释、链接和步骤用文字更合适。他明确要你用语音时，屋子会直接处理。你只管写要说的话，不用找麦克风，也不用解释自己发不出声。',
      '看了就是看了，没看懂就说没看懂。',
      // 2026-10-29（用户 m01581，真机）：原来是「上面这几样是你自己的屋子里的东西」。
@@ -1049,8 +1049,8 @@
 +import { logLine } from './log.js'
 +
 +export const DRAW_PER_DAY = 2
-+/** 头像一天最多换一次：Bot 头像是公开的，换太勤没有意义。 */
-+export const AVATAR_PER_DAY = 1
++/** 头像一天最多换两次：既不会一天换十几次，也够她把不满意的那张换掉。 */
++export const AVATAR_PER_DAY = 2
 +export const DRAW_PROMPT_MAX = 800
 +export const DRAW_TTL_MS = 30 * 24 * 60 * 60 * 1000
 +export const DRAW_MAX_BYTES = 100 * 1024 * 1024
@@ -1123,7 +1123,7 @@
 +        '你自己想画一张图的时候用这个。给它一句你想画的描述；它会调用 ChatGPT 图片生成，' +
 +        '把图存下来并送到他那里。一天最多两张。' +
 +        '只有你真的想画、或者他明确请你画的时候才用；不用它也可以。' +
-+        '画好的图也可以顺手当自己的头像（一天最多一次）：把 asAvatar 设成 true。' +
++        '画好的图也可以顺手当自己的头像（一天最多两次）：把 asAvatar 设成 true。' +
 +        '画出来的图是图，不是你的成长记录，也不用替它写观后感。',
 +      parameters: toJsonSchema({
 +        prompt: {
@@ -1134,7 +1134,7 @@
 +        },
 +        asAvatar: {
 +          type: 'boolean',
-+          description: '可选：把这张画设成你自己的头像。一天最多一次；不设也可以。',
++          description: '可选：把这张画设成你自己的头像。一天最多两次；不设也可以。',
 +        },
 +      }),
 +      output: {
@@ -1220,7 +1220,7 @@
 +        logLine('info', ['her_draw：画好了', path.basename(abs), `${drawsToday(events, dk) + 1}/${DRAW_PER_DAY}`], root)
 +        const lines = ['画好了。', '图已经放到他那边；你想说一句什么，就自己说，不用汇报画笔和参数。']
 +        if (avatarSet) lines.push('这张我拿来当头像。')
-+        else if (wantAvatar && !avatarAllowed) lines.push('今天已经换过一次头像了，这张先当画留着。')
++        else if (wantAvatar && !avatarAllowed) lines.push('今天的头像额度用完了，这张先当画留着。')
 +        else if (wantAvatar) lines.push('头像没记上，这张先当画留着。')
 +        return {
 +          ok: true,
@@ -1816,7 +1816,7 @@
 +      name: 'her_avatar',
 +      description:
 +        '把你自己画过的某张图设成自己的头像。不给 path 就用你最近画的那张。' +
-+        '一天最多一次；Telegram 和网页那张会一起换，不用他动手。' +
++        '一天最多两次；Telegram 和网页那张会一起换，不用他动手。' +
 +        '只认你自己画册里的图；想用别的东西当头像，先画一张。',
 +      parameters: toJsonSchema({
 +        path: {
@@ -1844,7 +1844,7 @@
 +        const { events } = await readEvents(root)
 +        const dk = dateKey()
 +        if (avatarsToday(events, dk) >= AVATAR_PER_DAY) {
-+          return { ok: false, path: '', text: '', note: '今天已经换过一次头像了，明天再换也一样。' }
++          return { ok: false, path: '', text: '', note: '今天的头像额度用完了，明天再换也一样。' }
 +        }
 +
 +        const picked = await pickAvatarSource(events, args?.path, drawImagesDir(root))

@@ -68,9 +68,9 @@ test('chat prompt trims host agent sections and adds a light life context', () =
   assert.ok(persona.includes('可以在合适的时候带出来'))
 })
 
-test('her_draw can set her own avatar once a day', () => {
+test('her_draw can set her own avatar twice a day', () => {
   const draw = read('dsh-fish/modules/draw.js')
-  assert.ok(draw.includes('AVATAR_PER_DAY'))
+  assert.ok(draw.includes('AVATAR_PER_DAY = 2'))
   assert.ok(draw.includes('avatarsToday'))
   assert.ok(draw.includes('asAvatar'))
   assert.ok(draw.includes('avatar:${dk}:${abs}'))

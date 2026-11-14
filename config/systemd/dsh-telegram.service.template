@@ -21,7 +21,7 @@ StandardError=journal
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=__FISH_HOME__/.telegram-bridge
+ReadWritePaths=__FISH_HOME__/.telegram-bridge __FISH_HOME__/.dsh-fish
 ProtectHome=no
 
 [Install]

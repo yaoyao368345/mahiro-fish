@@ -72,7 +72,7 @@
 ## 自选头像
 
 1. 她调用 `her_avatar(path?)`（不给就用最近那张），或 `her_draw(prompt, asAvatar: true)`。
-2. 插件写 `meta avatar:<日期>:<绝对路径>`（每天最多 1 次）。
+2. 插件写 `meta avatar:<日期>:<绝对路径>`（每天最多 2 次）。
 3. 桥的 `avataroutbox.mjs` 只接受受信任生成目录内的图片，转成
    640×640 JPG，调 `setMyProfilePhoto`。
 4. 同一张写成 `~/.dsh-fish/avatar.jpg`，DSH Web 状态卡同步换。
@@ -100,8 +100,8 @@
 | `dsh-telegram.service` | 无（出站长轮询） | Telegram 桥 |
 
 两个服务都以 `fish` 用户运行。`dsh-web` 使用 `ProtectSystem=full`，
-`dsh-telegram` 使用 `ProtectSystem=strict` 且只允许写
-`~/.telegram-bridge`。
+`dsh-telegram` 使用 `ProtectSystem=strict`，只允许写
+`~/.telegram-bridge` 和 `~/.dsh-fish`（后者只用于状态卡头像）。
 
 ## 失败时的降级
 

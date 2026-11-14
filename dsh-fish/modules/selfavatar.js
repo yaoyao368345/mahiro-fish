@@ -66,7 +66,7 @@ export function registerSelfAvatar(ctx, deps = {}) {
       name: 'her_avatar',
       description:
         '把你自己画过的某张图设成自己的头像。不给 path 就用你最近画的那张。' +
-        '一天最多一次；Telegram 和网页那张会一起换，不用他动手。' +
+        '一天最多两次；Telegram 和网页那张会一起换，不用他动手。' +
         '只认你自己画册里的图；想用别的东西当头像，先画一张。',
       parameters: toJsonSchema({
         path: {
@@ -94,7 +94,7 @@ export function registerSelfAvatar(ctx, deps = {}) {
         const { events } = await readEvents(root)
         const dk = dateKey()
         if (avatarsToday(events, dk) >= AVATAR_PER_DAY) {
-          return { ok: false, path: '', text: '', note: '今天已经换过一次头像了，明天再换也一样。' }
+          return { ok: false, path: '', text: '', note: '今天的头像额度用完了，明天再换也一样。' }
         }
 
         const picked = await pickAvatarSource(events, args?.path, drawImagesDir(root))

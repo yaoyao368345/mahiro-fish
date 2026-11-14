@@ -29,7 +29,9 @@
 - 她可以自己换头像：`her_avatar` 挑一张画过的图（不给路径就用最近那张），
   或 `her_draw(..., asAvatar: true)` 画的同时换。插件写 `avatar:` 事件，
   桥转 640×640 JPG 后调 `setMyProfilePhoto`，并把同一张写成网页状态卡头像。
-  头像每天最多 1 次，失败退避重试。
+  头像每天最多 2 次，失败退避重试。
+- 头像额度从每天 1 次调到 2 次；`dsh-telegram` 增加
+  `ReadWritePaths=~/.dsh-fish`，网页状态卡头像可以真正写入。
 
 ## 0.1.0 — 2026-11-14
 

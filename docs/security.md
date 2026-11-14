@@ -91,6 +91,7 @@ git diff --cached
 - `PrivateTmp=yes`
 - `dsh-web`: `ProtectSystem=full`
 - `dsh-telegram`: `ProtectSystem=strict`，只允许写 `~/.telegram-bridge`
+  和 `~/.dsh-fish`（后者只用于状态卡头像）
 - 不监听公网；DSH 只绑 `127.0.0.1`
 
 ## 网络暴露
