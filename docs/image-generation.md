@@ -48,9 +48,11 @@ Telegram sendPhoto
 
 ## 自选头像
 
-`her_draw(prompt, asAvatar: true)` 可以让她把刚画好的那张设成自己的头像：
+`her_avatar(path?)` 可以把已经画过的图设成自己的头像；不给 `path` 就用最近画的那张。
+`her_draw(prompt, asAvatar: true)` 则是在画的同时顺手换掉。
 
 1. 插件写 `meta avatar:<日期>:<绝对路径>`；头像每天最多 1 次。
+   只接受她自己画册（生成目录）里的文件。
 2. 桥的 `avataroutbox.mjs` 只接受生成目录里的图片，用 ffmpeg 转成
    640×640 JPG。
 3. 调 Telegram Bot API `setMyProfilePhoto`。静态头像只收 JPG，

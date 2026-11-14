@@ -140,7 +140,7 @@ sudo chown -R fish:fish /home/fish/.dsh/profiles/web/node_modules/@ssamurias/dsh
 2. 如果校验和已经全部匹配，直接跳过（可重复执行）；
 3. 备份现有 `lib/`；
 4. `patch -p1 --dry-run` 后正式应用；
-5. 用 `CHECKSUMS.sha256` 校验 20 个文件。
+5. 用 `CHECKSUMS.sha256` 校验 21 个文件。
 
 ## 7. 安装 Telegram 桥
 

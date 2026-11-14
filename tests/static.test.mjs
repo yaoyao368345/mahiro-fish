@@ -30,7 +30,7 @@ test('public env template contains only placeholders', () => {
 test('patch is pinned to dsh-fish 0.9.9 and adds the expected modules', () => {
   const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
   assert.ok(patch.includes('--- a/lib/proactive.js'))
-  for (const mod of ['draw.js', 'mediaindex.js', 'mediarecall.js', 'sub.js', 'voice.js']) {
+  for (const mod of ['draw.js', 'selfavatar.js', 'mediaindex.js', 'mediarecall.js', 'sub.js', 'voice.js']) {
     assert.ok(patch.includes(`+++ b/lib/${mod}`), `patch missing ${mod}`)
   }
 })
@@ -56,6 +56,9 @@ test('her_draw can set her own avatar once a day', () => {
   const outbox = read('telegram-bridge/avataroutbox.mjs')
   assert.ok(outbox.includes('avatarsFromEvents'))
   assert.ok(outbox.includes('trustedImagePath'))
+  const selfAvatar = read('dsh-fish/modules/selfavatar.js')
+  assert.ok(selfAvatar.includes('her_avatar'))
+  assert.ok(selfAvatar.includes('latestDrawing'))
 })
 
 test('systemd templates do not hardcode a real user or host', () => {

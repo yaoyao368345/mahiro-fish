@@ -152,18 +152,19 @@
  /** 一次行动的代价（动完扣掉）。留给记账用，纯数值。 */
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -21,6 +21,10 @@
+@@ -21,6 +21,11 @@
  import { registerRecall } from './recall.js'
  import { registerHerDiary } from './herdiary.js'
  import { registerWatch } from './watch.js'
 +import { registerSub } from './sub.js'
 +import { registerDraw } from './draw.js'
++import { registerSelfAvatar } from './selfavatar.js'
 +import { registerVoice } from './voice.js'
 +import { registerMediaRecall } from './mediarecall.js'
  import { registerLetter } from './letter.js'
  import { registerNote } from './note.js'
  import { registerAppoint } from './appoint.js'
-@@ -418,6 +422,14 @@
+@@ -418,6 +423,16 @@
            // issue #7：日记不进事件流，所以她需要一个只读的窗口回头翻（her_diary）。
            () => registerHerDiary(ctx, { root }),
            () => registerWatch(ctx, { root, tenant: tenancy }),
@@ -171,6 +172,8 @@
 +          () => registerSub(ctx, { root, tenant: tenancy }),
 +          // M2.10：她自己想画画时用；内部复用 image_generate，不另开 GPT 会话。
 +          () => registerDraw(ctx, { root, tenant: tenancy, log: (...a) => logger.info(...a) }),
++          // 2026-11-14：把已经画过的某张图设成自己的头像（不用重画）。
++          () => registerSelfAvatar(ctx, { root, tenant: tenancy }),
 +          // M2.12.4：这一轮用文字还是声音，由她自己选；桥负责额度、时段与回退。
 +          () => registerVoice(ctx, { root, tenant: tenancy }),
 +          // M2.6：只读媒体回忆。只查 she 真看过画面的索引；图还在就给路径，不自动读图。
@@ -274,7 +277,7 @@
      // 原来只写「给它一个视频号」，那是动作不是处境——她得先知道什么时候会想到看画面。
      '另有一个 bili_watch：翻到一条、光看标题和简介还是想知道画面里到底是什么的时候，给它一个视频号，它会把那几帧截下来给你看。',
 +    '还有一个 bili_sub：想知道某条视频里到底说了哪几句，给它视频号；先给你带时间点的三句，想接着读就把最后那句的时间填进 from。',
-+    '你自己想画一张图的时候，用 her_draw：给它一句你想画的描述，画好的图会送到他那里；一天最多两张。不用它也可以。',
++    '你自己想画一张图的时候，用 her_draw：给它一句你想画的描述，画好的图会送到他那里；一天最多两张。想把自己的头像换成画过的图，用 her_avatar（不给路径就用最近那张），或者画的时候加 asAvatar: true；一天最多一次，Telegram 和网页会一起换，不用他动手。不用它也可以。',
 +    '在 Telegram 私聊里，他发语音时你照常用字回。你也可以自己决定这一轮用文字还是用声音：想让他听见你的语气，就在这一轮调用 her_voice，然后照常写要说的话；普通闲聊、长解释、链接和步骤用文字更合适。他明确要你用语音时，屋子会直接处理。你只管写要说的话，不用找麦克风，也不用解释自己发不出声。',
      '看了就是看了，没看懂就说没看懂。',
      // 2026-10-29（用户 m01581，真机）：原来是「上面这几样是你自己的屋子里的东西」。
@@ -467,12 +470,13 @@
   *
   * 这份表不只是「没有注册记录时的兜底」：真实启动里收窄先于工具注册
   * （`lib/index.js` 先 `registerToolRestrict`，工具到后面的 `withUseDuringRegistration` 才注册），
-@@ -65,6 +65,10 @@
+@@ -65,6 +65,11 @@
    'her_appoint', // 跟他约一件几天后的事（通用预约簿，2026-11-08）
    'bili_look', // 看 B 站的列表
    'bili_watch', // 看一条视频的画面
 +  'bili_sub', // 查一条视频的字幕片段（M2.8A，从 1.0.0 移植）
 +  'her_draw', // 自己想画一张图的时候（M2.10，复用 image_generate）
++  'her_avatar', // 把画过的图设成自己的头像（2026-11-14）
 +  'her_voice', // 这一轮想用声音说（M2.12.4，只做标记，不改回复）
 +  'her_media', // 翻自己真正看过的画面（只读索引，M2.6）
    'bili_speak', // 在评论区说话
@@ -1427,6 +1431,141 @@
 +      },
 +    }),
 +  )
++}
+--- /dev/null
++++ b/lib/selfavatar.js
+@@ -0,0 +1,132 @@
++/**
++ * selfavatar.js —— 工具 `her_avatar`：把已经画过的某张图设成自己的头像
++ *
++ * 为什么不只靠 her_draw 的 asAvatar：
++ *   她经常是「画完过一会儿才想起来用它当头像」。那条路要求重新画一张，
++ *   既浪费当天的画图额度，也不是她想要的。这个工具只挑已经画过的图。
++ *
++ * 只接受她自己画册（drawImagesDir）里的文件；不给 path 就用最近画的那张。
++ * 真正的上传由桥做（Bot Token 只在桥那边）：这里只写一条
++ * `avatar:<日期>:<路径>` 元事件，和 her_draw(asAvatar) 共用同一个出口。
++ */
++
++import fs from 'node:fs'
++import path from 'node:path'
++
++import { readEvents, appendEvent, rootDir } from './store.js'
++import { loadConfig, dateKey } from './settings.js'
++import { drawImagesDir, avatarsToday, AVATAR_PER_DAY } from './draw.js'
++import { deriveSelf } from './derive.js'
++import { defineTool } from './tool.js'
++import { guardWrite } from './tenant.js'
++import { logLine } from './log.js'
++import { toJsonSchema } from './toolschema.js'
++
++/** 事件流里最近一条 `draw:<日期>:<路径>`。 */
++export function latestDrawing(events = []) {
++  let last = null
++  for (const e of events ?? []) {
++    if (e?.type !== 'meta') continue
++    const m = /^draw:(\d{4}-\d{2}-\d{2}):(.+)$/.exec(String(e?.text ?? ''))
++    if (!m) continue
++    last = { date: m[1], path: String(m[2]).trim(), ts: Date.parse(String(e?.ts ?? '')) || 0 }
++  }
++  return last
++}
++
++/**
++ * 选出这次要用的图。
++ * 只认她画册里的文件；给了路径就用它，没给就用最近那张。
++ * @returns {Promise<{ok:true,path:string}|{ok:false,why:string}>}
++ */
++export async function pickAvatarSource(events, rawPath, dir) {
++  const base = path.resolve(String(dir ?? ''))
++  if (!base) return { ok: false, why: '还没有画册。' }
++  const p = String(rawPath ?? '').trim()
++  const chosen = p ? path.resolve(p) : (() => {
++    const last = latestDrawing(events)
++    return last?.path ? path.resolve(last.path) : ''
++  })()
++  if (!chosen) return { ok: false, why: '我还没画过能当头像的图。' }
++  if (!chosen.startsWith(base + path.sep)) return { ok: false, why: '这张不在我的画册里。' }
++  try {
++    const st = await fs.promises.stat(chosen)
++    if (!st.isFile() || st.size < 12) return { ok: false, why: '这张图找不到了。' }
++  } catch {
++    return { ok: false, why: '这张图找不到了。' }
++  }
++  return { ok: true, path: chosen }
++}
++
++export function registerSelfAvatar(ctx, deps = {}) {
++  const root = deps.root ?? rootDir()
++
++  return ctx.tools.register(
++    defineTool({
++      name: 'her_avatar',
++      description:
++        '把你自己画过的某张图设成自己的头像。不给 path 就用你最近画的那张。' +
++        '一天最多一次；Telegram 和网页那张会一起换，不用他动手。' +
++        '只认你自己画册里的图；想用别的东西当头像，先画一张。',
++      parameters: toJsonSchema({
++        path: {
++          type: 'string',
++          description: '可选：哪张画。不写就用最近画的那张。',
++        },
++      }),
++      output: {
++        schema: {
++          type: 'object',
++          properties: {
++            ok: { type: 'boolean' },
++            path: { type: 'string' },
++            text: { type: 'string' },
++            note: { type: 'string' },
++          },
++          required: ['ok', 'path', 'text', 'note'],
++        },
++        render: (_args, out) => [{ type: 'text', text: out.ok ? out.text : `这次没换成：${out.note}` }],
++      },
++      async execute(args, exec) {
++        const who = guardWrite(tenancyOf(root, deps.tenant), exec, 'her_avatar')
++        if (!who.ok) return { ok: false, path: '', text: '', note: who.note }
++
++        const { events } = await readEvents(root)
++        const dk = dateKey()
++        if (avatarsToday(events, dk) >= AVATAR_PER_DAY) {
++          return { ok: false, path: '', text: '', note: '今天已经换过一次头像了，明天再换也一样。' }
++        }
++
++        const picked = await pickAvatarSource(events, args?.path, drawImagesDir(root))
++        if (!picked.ok) return { ok: false, path: '', text: '', note: picked.why }
++
++        const { config } = await loadConfig(root).catch(() => ({ config: {} }))
++        const model = deriveSelf(events, { growthDays: config?.growthDays })
++        const stored = await appendEvent(
++          { type: 'meta', text: `avatar:${dk}:${picked.path}` },
++          { day: model.day, stage: model.stage, source: 'system' },
++          root,
++        ).catch(() => null)
++        if (!stored?.id) {
++          logLine('warn', ['her_avatar：头像事件没记下', path.basename(picked.path)], root)
++          return { ok: false, path: '', text: '', note: '头像没记上，等会儿再试。' }
++        }
++
++        logLine('info', ['her_avatar：换头像', path.basename(picked.path)], root)
++        return {
++          ok: true,
++          path: picked.path,
++          text: '这张我拿来当头像。',
++          note: '',
++        }
++      },
++    }),
++  )
++}
++
++function tenancyOf(root, tenancy) {
++  if (tenancy && typeof tenancy === 'object') {
++    return { root, herDir: String(tenancy.herDir ?? ''), tenant: tenancy.tenant ?? { ok: true } }
++  }
++  return { root, herDir: '', tenant: { ok: true } }
 +}
 --- /dev/null
 +++ b/lib/sub.js

@@ -61,7 +61,7 @@
 
 ## 自选头像
 
-1. 她调用 `her_draw(prompt, asAvatar: true)`。
+1. 她调用 `her_avatar(path?)`（不给就用最近那张），或 `her_draw(prompt, asAvatar: true)`。
 2. 插件写 `meta avatar:<日期>:<绝对路径>`（每天最多 1 次）。
 3. 桥的 `avataroutbox.mjs` 只接受受信任生成目录内的图片，转成
    640×640 JPG，调 `setMyProfilePhoto`。
