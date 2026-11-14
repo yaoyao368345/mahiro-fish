@@ -92,36 +92,34 @@ SHA256、字节数、状态。
 
 ## 备份
 
-### 私有备份（推荐）
+### 私有备份（GitHub Private 仓库）
+
+运行状态备份到独立的私有仓库，不使用文件加密：
 
 ```bash
-sudo systemctl stop dsh-web dsh-telegram
-sudo tar -C /home/fish -czf /root/mahiro-private-$(date +%F).tar.gz \
-  .dsh-fish \
-  .telegram-bridge \
-  .telegram-bridge.env \
-  .breezeblue.env \
-  .dsh/profiles/web/cordis.patch.yml \
-  .dsh/plugins/subscriptions/auth.json \
-  telegram-bridge
-sudo systemctl start dsh-web dsh-telegram
+cd /opt/mahiro-fish
+sudo bash scripts/backup-private.sh
+sudo bash scripts/verify-private.sh
 ```
 
-然后加密：
+备份包含事件流、日记/梦、DSH 会话、媒体索引、Telegram 去重状态和
+非敏感配置；不包含 Bot Token、API Key、ChatGPT OAuth、B 站 Cookie、
+真实 `.env` 或图片/音频/视频本体。
 
-```bash
-gpg -c /root/mahiro-private-$(date +%F).tar.gz
-```
-
-把 `.gpg` 放到另一台机器或对象存储。**不要**上传到公开仓库。
+详细说明见 [private-backup.md](private-backup.md)。
 
 ### 恢复
 
+先隔离演练：
+
 ```bash
-sudo systemctl stop dsh-web dsh-telegram
-sudo tar -C /home/fish -xzf mahiro-private-YYYY-MM-DD.tar.gz
-sudo chown -R fish:fish /home/fish/.dsh-fish /home/fish/.telegram-bridge
-sudo systemctl start dsh-web dsh-telegram
+sudo bash scripts/restore-private.sh --target /tmp/mahiro-restore
+```
+
+确认后覆盖线上（会先备份当前状态）：
+
+```bash
+sudo bash scripts/restore-private.sh --apply --yes
 ```
 
 恢复后先看：
