@@ -1,5 +1,7 @@
 # mahiro-fish · 真寻养成计划
 
+仓库：<https://github.com/yaoyao368345/mahiro-fish>
+
 把一只在 Debian 服务器上养大的「绪山真寻」整理成可以复现的开源部署：
 DSH + dsh-fish + DeepSeek 日常对话，Telegram 私聊，自主唤醒与主动留话，
 B 站浏览/抽帧/字幕，长期媒体记忆，ChatGPT 生图，以及语音收发。
@@ -82,7 +84,7 @@ DSH Web (127.0.0.1:3080)
 
 ```bash
 # 1. 把仓库放到服务器（不要放在 /root 下，避免权限问题）
-sudo git clone <你的仓库地址> /opt/mahiro-fish
+sudo git clone https://github.com/yaoyao368345/mahiro-fish.git /opt/mahiro-fish
 cd /opt/mahiro-fish
 
 # 2. 一键安装（会创建 fish 用户、装 Node/DSH、固定插件版本、打补丁、导入人格）

@@ -27,7 +27,7 @@ dsh-plugin-subscriptions 0.9.13, pnpm 11.28.5.
 ## Quick start
 
 ```bash
-sudo git clone <repo-url> /opt/mahiro-fish
+sudo git clone https://github.com/yaoyao368345/mahiro-fish.git /opt/mahiro-fish
 cd /opt/mahiro-fish
 sudo bash scripts/install.sh
 sudo nano /etc/mahiro-fish/dsh.env                  # DeepSeek API key

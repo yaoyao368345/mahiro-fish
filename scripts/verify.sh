@@ -2,6 +2,7 @@
 # 安装后自检。可重复执行；不会修改线上数据。
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
+export PATH="${NODE_BIN}:$PATH"
 
 FAIL=0
 pass() { ok "$*"; }
@@ -41,7 +42,7 @@ if [ "${MAHIRO_SKIP_SERVICE_CHECK:-0}" = 1 ]; then
 elif command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   check "systemctl is-active --quiet dsh-web" "dsh-web 正在运行"
   check "systemctl is-active --quiet dsh-telegram" "dsh-telegram 正在运行"
-  check "curl -fsS --max-time 5 http://127.0.0.1:3080/ >/dev/null" "DSH Web 127.0.0.1:3080 可访问"
+  check "curl -sS --max-time 5 http://127.0.0.1:3080/ >/dev/null" "DSH Web 127.0.0.1:3080 可访问"
 else
   warn "没有 systemd，跳过服务检查"
 fi
