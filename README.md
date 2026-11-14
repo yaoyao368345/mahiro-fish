@@ -26,6 +26,7 @@ B 站浏览/抽帧/字幕，长期媒体记忆，ChatGPT 生图，以及语音�
 | B 站 | 浏览、搜索、相关推荐、视频抽帧、视觉理解、字幕 |
 | 长期媒体记忆 | `media/index.json` + 只读工具 `her_media` |
 | 生图 | `her_draw` → ChatGPT Plus OAuth → Telegram `sendPhoto` |
+| 自选头像 | `her_draw(asAvatar)` → `setMyProfilePhoto` + 网页状态卡 |
 | 语音识别 | 本地 sherpa-onnx + SenseVoice Small INT8 |
 | 语音合成 | OpenRouter 免费 TTS / 本地 Kokoro / Breeze（自带音色）→ `sendVoice` |
 

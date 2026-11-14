@@ -26,6 +26,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createOutbox } from './outbox.mjs'
 import { createImageOutbox } from './imageoutbox.mjs'
+import { createAvatarOutbox } from './avataroutbox.mjs'
 import { checkAutoVoice, parseVoicePreference, hkClock } from './voicepolicy.mjs'
 
 const HOME = process.env.HOME || '/var/lib/fish'
@@ -1139,6 +1140,49 @@ async function resumePendingTts() {
   log('tts 恢复完成', ok ? 'voice' : 'text')
 }
 
+/** 把 her_draw 的 PNG 转成 Telegram 静态头像要求的 640×640 JPG。 */
+async function convertAvatarJpg(cfg, src, dest) {
+  await new Promise((resolve, reject) => {
+    const p = spawn(cfg.FFMPEG_BIN, [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-i', src,
+      '-vf', 'scale=640:640:force_original_aspect_ratio=increase,crop=640:640',
+      '-frames:v', '1', '-q:v', '3', dest,
+    ], { windowsHide: true })
+    let err = ''
+    p.stderr.on('data', (c) => { err += String(c) })
+    p.on('error', reject)
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg ${code}: ${err.slice(0, 160)}`))))
+  })
+}
+
+/** 调 Telegram；静态头像必须作为新文件 multipart 上传，不能复用 file_id。 */
+async function setBotAvatar(cfg, jpgPath) {
+  const fd = new FormData()
+  fd.set('photo', JSON.stringify({ type: 'static', photo: 'attach://avatar' }))
+  fd.set('avatar', new Blob([await fsp.readFile(jpgPath)], { type: 'image/jpeg' }), 'avatar.jpg')
+  const url = `${apiBase(cfg)}/bot${cfg.TELEGRAM_BOT_TOKEN}/setMyProfilePhoto`
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), 45_000)
+  try {
+    const res = await fetch(url, { method: 'POST', body: fd, signal: ac.signal })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok || !j.ok) throw new Error(j.description || `HTTP ${res.status}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 网页状态卡头像：写 <数据目录>/avatar.jpg，并清掉会抢先命中的旧格式。 */
+async function writeWebAvatar(fishRoot, jpgPath) {
+  for (const ext of ['png', 'webp', 'gif']) {
+    try { await fsp.unlink(path.join(fishRoot, `avatar.${ext}`)) } catch { /* 没有就算了 */ }
+  }
+  const dest = path.join(fishRoot, 'avatar.jpg')
+  await fsp.copyFile(jpgPath, dest)
+  await fsp.chmod(dest, 0o644).catch(() => {})
+}
+
 async function main() {
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
   log('桥启动 · node', process.version, '· 状态目录', STATE_DIR)
@@ -1171,12 +1215,39 @@ async function main() {
       await sendPhotoStrict(cfg, cfg.OWNER_TELEGRAM_ID, filePath)
     },
   })
+  // ---- 头像出口 ----
+  // 只认 her_draw 写的 avatar:<日期>:<受信任目录路径>；换 Telegram Bot 头像，
+  // 顺手把同一张写成网页状态卡头像。
+  const avatarOutbox = createAvatarOutbox({
+    statePath: path.join(STATE_DIR, 'avatar-outbox.json'),
+    eventsPath: path.join(HOME, '.dsh-fish', 'events.jsonl'),
+    trustedDir: path.join(HOME, '.dsh', 'plugins', 'subscriptions', 'images'),
+    tmpDir: STATE_DIR,
+    log,
+    convert: async (src, dest) => {
+      const cfg = readConfig()
+      await convertAvatarJpg(cfg, src, dest)
+    },
+    send: async (jpgPath, item) => {
+      const cfg = readConfig()
+      if (!cfg.TELEGRAM_BOT_TOKEN) throw new Error('没有 Bot Token')
+      await setBotAvatar(cfg, jpgPath)
+      try {
+        await writeWebAvatar(path.join(HOME, '.dsh-fish'), jpgPath)
+      } catch (err) {
+        log('头像：网页状态卡没换成：', err?.message ?? err)
+      }
+      log('头像已更换：', path.basename(String(item?.path ?? jpgPath)))
+    },
+  })
   const outboxTick = async () => {
     try {
       outbox.scan()
       await outbox.pump()
       imageOutbox.scan()
       await imageOutbox.pump()
+      avatarOutbox.scan()
+      await avatarOutbox.pump()
     } catch (err) {
       log('outbox tick failed:', err?.message ?? err)
     }
@@ -1186,6 +1257,7 @@ async function main() {
   outboxTimer.unref?.()
   log('主动留话出口已就绪：只看 her_leave 的 letter 事件，队列', path.join(STATE_DIR, 'outbox.json'))
   log('生图出口已就绪：只看 her_draw 的 draw 事件，队列', path.join(STATE_DIR, 'image-outbox.json'))
+  log('头像出口已就绪：只看 her_draw 的 avatar 事件，队列', path.join(STATE_DIR, 'avatar-outbox.json'))
 
   let queue = Promise.resolve()
   const enqueue = (fn) => { queue = queue.then(fn, fn).catch((e) => log('队列异常：', e?.message ?? e)) }

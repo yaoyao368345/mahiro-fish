@@ -18,6 +18,9 @@
   短视频重新进入自主浏览的候选池。
 - 默认提示词禁令（`lib/rules.js`）不改：导入人格时 `bansMuted` 为真，
   它们本来就不进 system prompt；原因记在 `docs/development.md`。
+- 她可以自己换头像：`her_draw(..., asAvatar: true)` 写一条 `avatar:` 事件，
+  桥转 640×640 JPG 后调 `setMyProfilePhoto`，并把同一张写成网页状态卡头像。
+  头像每天最多 1 次，失败退避重试。
 
 ## 0.1.0 — 2026-11-14
 

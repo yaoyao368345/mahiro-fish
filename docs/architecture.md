@@ -59,6 +59,14 @@
    通过 `sendPhoto` 发给主人；目录外路径直接拒绝。
 6. 图片 30 天 / 100MB 清理；事件流不修改。
 
+## 自选头像
+
+1. 她调用 `her_draw(prompt, asAvatar: true)`。
+2. 插件写 `meta avatar:<日期>:<绝对路径>`（每天最多 1 次）。
+3. 桥的 `avataroutbox.mjs` 只接受受信任生成目录内的图片，转成
+   640×640 JPG，调 `setMyProfilePhoto`。
+4. 同一张写成 `~/.dsh-fish/avatar.jpg`，DSH Web 状态卡同步换。
+
 ## 数据文件
 
 | 路径 | 作用 | 是否公开 |

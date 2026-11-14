@@ -46,6 +46,20 @@ telegram-bridge/imageoutbox.mjs
 Telegram sendPhoto
 ```
 
+## 自选头像
+
+`her_draw(prompt, asAvatar: true)` 可以让她把刚画好的那张设成自己的头像：
+
+1. 插件写 `meta avatar:<日期>:<绝对路径>`；头像每天最多 1 次。
+2. 桥的 `avataroutbox.mjs` 只接受生成目录里的图片，用 ffmpeg 转成
+   640×640 JPG。
+3. 调 Telegram Bot API `setMyProfilePhoto`。静态头像只收 JPG，
+   而且每次都必须重新上传，不能复用 `file_id`。
+4. 成功后把同一张写成 `<数据目录>/avatar.jpg`，DSH Web 状态卡同步换。
+
+上传失败按 5s/10s/20s… 退避，最多 5 次；`avatar:` 事件仍留在事件流里。
+头像额度与画图额度分开：画可以照画，只是当天不能再改头像。
+
 ## 额度与清理
 
 - 每天最多 2 张（按本地日期）。

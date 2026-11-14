@@ -47,6 +47,17 @@ test('watch quota applies only to her own picks, not owner-shared videos', () =>
   assert.ok(watch.includes('...(selfWatch ? { self: true } : {})'))
 })
 
+test('her_draw can set her own avatar once a day', () => {
+  const draw = read('dsh-fish/modules/draw.js')
+  assert.ok(draw.includes('AVATAR_PER_DAY'))
+  assert.ok(draw.includes('avatarsToday'))
+  assert.ok(draw.includes('asAvatar'))
+  assert.ok(draw.includes('avatar:${dk}:${abs}'))
+  const outbox = read('telegram-bridge/avataroutbox.mjs')
+  assert.ok(outbox.includes('avatarsFromEvents'))
+  assert.ok(outbox.includes('trustedImagePath'))
+})
+
 test('systemd templates do not hardcode a real user or host', () => {
   for (const unit of ['config/systemd/dsh-web.service.template', 'config/systemd/dsh-telegram.service.template']) {
     const s = read(unit)
