@@ -411,6 +411,7 @@ bash scripts/scan-secrets.sh
 - [语音](docs/voice.md)
 - [生图](docs/image-generation.md)
 - [开发与补丁](docs/development.md)
+- [待开发](docs/backlog.md)
 - [私有记忆备份](docs/private-backup.md)
 - [安全与隐私](docs/security.md)
 
