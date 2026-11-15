@@ -5,7 +5,8 @@
 这个仓库公开：
 
 - 代码、补丁、脚本、模板；
-- 初始绪山真寻人格；
+- 推荐默认的原创大肥鱼人格；
+- 可选的旧绪山真寻人格模板；
 - 部署文档。
 
 这个仓库不公开：
@@ -32,6 +33,7 @@ git add /var/lib/fish  # 禁止
 正确做法是只复制明确列出的文件到仓库：
 
 ```text
+persona/original-fish.md
 persona/mahiro-handover.md
 telegram-bridge/*.mjs
 dsh-fish/patches/*
@@ -137,13 +139,15 @@ ssh -L 3080:127.0.0.1:3080 user@server
 
 ## 公开人格的边界
 
-`persona/mahiro-handover.md` 是特意公开的初始模板。它不包含：
+`persona/original-fish.md` 和可选的 `persona/mahiro-handover.md` 是特意公开的初始模板。
+它们不包含：
 
 - 旧实例的称呼、私人关系、聊天；
 - 日记、梦、成长事件；
 - 真实生活经历。
 
-公开它不等于公开旧实例的记忆。
+公开模板不等于公开旧实例的记忆。新实例只读当前状态库里的 seed 和事件，
+不会读取旧实例封存目录、旧 DSH 会话或私有备份。
 
 ## 依赖供应链
 

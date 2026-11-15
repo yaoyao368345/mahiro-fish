@@ -7,7 +7,23 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
-test('initial persona keeps the required character basis', () => {
+test('original-fish persona stays open-ended and short', () => {
+  const p = read('persona/original-fish.md')
+  for (const needle of [
+    '你叫大肥鱼',
+    '还没有形成特别固定的性格',
+    '不需要为了符合某种人设',
+    '不需要固定口癖',
+    '将来会成为什么样的大肥鱼，不需要现在决定',
+  ]) {
+    assert.ok(p.includes(needle), `original-fish persona missing: ${needle}`)
+  }
+  assert.ok(!p.includes('绪山真寻'), 'original-fish must not carry the old character')
+  assert.ok(!p.includes('别当欧尼酱了'), 'original-fish must not carry the old source')
+  assert.ok(p.length < 3000, 'original-fish should stay short')
+})
+
+test('legacy mahiro persona remains available as an optional template', () => {
   const p = read('persona/mahiro-handover.md')
   for (const needle of [
     '绪山真寻', '緒山まひろ', '别当欧尼酱了',

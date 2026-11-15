@@ -11,6 +11,9 @@
 #
 # 可指定历史提交：
 #   sudo bash scripts/restore-private.sh --commit <sha>
+#
+# 可指定期望人格（auto / blank / original-fish / mahiro / custom）：
+#   sudo bash scripts/restore-private.sh --expect-persona mahiro
 set -euo pipefail
 
 if [ -z "${FISH_HOME:-}" ] && [ -d /var/lib/fish ] && [ ! -d /home/fish ]; then
@@ -26,15 +29,17 @@ TARGET=""
 APPLY=0
 YES=0
 MANIFEST=""
+EXPECT_PERSONA="${PERSONA_EXPECT:-auto}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo-dir) PRIVATE_DIR="${2:?缺少目录}"; shift 2 ;;
     --commit) COMMIT="${2:?缺少提交}"; shift 2 ;;
     --target) TARGET="${2:?缺少目录}"; shift 2 ;;
     --manifest) MANIFEST="${2:?缺少 manifest}"; shift 2 ;;
+    --expect-persona) EXPECT_PERSONA="${2:?缺少人格类型}"; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --yes) YES=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) die "未知参数：$1" ;;
   esac
 done
@@ -76,17 +81,17 @@ find_seed() {
   local root="$1" ev
   ev="$(find "$root" -path '*/.dsh-fish/events.jsonl' -print -quit)"
   [ -n "$ev" ] || die "备份里没有 events.jsonl"
+  "${NODE_BIN}/node" "${REPO_DIR}/scripts/persona-seed.mjs" "$ev" --expect "$EXPECT_PERSONA" \
+    || die "事件流里的 seed 不符合期望人格（${EXPECT_PERSONA}）"
   python3 - "$ev" <<'PY'
 import json, sys
 p = sys.argv[1]
-n = 0; seed = False
+n = 0
 for line in open(p, encoding='utf-8'):
     line = line.strip()
     if not line: continue
-    e = json.loads(line); n += 1
-    if e.get('type') == 'seed' and '绪山真寻' in str(e.get('text', '')): seed = True
-if not seed: raise SystemExit('事件流里没有绪山真寻 seed')
-print(f'  seed 校验通过；事件数 {n}')
+    json.loads(line); n += 1
+print(f'  事件数 {n}')
 PY
 }
 

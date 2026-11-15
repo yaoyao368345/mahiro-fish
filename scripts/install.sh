@@ -2,10 +2,13 @@
 # mahiro-fish 一键安装（Debian 12/13，可重复执行）。
 #
 # 用法：
-#   sudo bash scripts/install.sh                 # 核心功能 + 自动导入初始人格
+#   sudo bash scripts/install.sh                 # 核心功能 + 自动导入原创大肥鱼
 #   sudo bash scripts/install.sh --with-asr      # 额外安装本地语音识别
 #   sudo bash scripts/install.sh --no-persona    # 只装环境，不导入人格
 #   sudo bash scripts/install.sh --no-start      # 装完不启动 systemd
+#   sudo bash scripts/install.sh --persona-mode mahiro   # 改用旧真寻模板
+#   sudo bash scripts/install.sh --persona-mode blank    # 用 dsh-fish 原生空白人格
+#   sudo bash scripts/install.sh --persona-mode custom --persona persona/my-fish.md
 #
 # 所有会覆盖的文件都会先备份到 $FISH_HOME/.mahiro-fish-backups/<时间>/。
 set -euo pipefail
@@ -17,16 +20,20 @@ DO_START=1
 FORCE_CONFIG=0
 WITH_SYSTEMD=1
 SKIP_APT=0
-for a in "$@"; do
-  case "$a" in
-    --with-asr) WITH_ASR=1 ;;
-    --no-persona) WITH_PERSONA=0 ;;
-    --no-start) DO_START=0 ;;
-    --no-systemd) WITH_SYSTEMD=0; DO_START=0 ;;
-    --skip-apt) SKIP_APT=1 ;;
-    --force-config) FORCE_CONFIG=1 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
-    *) die "未知参数：$a" ;;
+PERSONA_MODE="${PERSONA_MODE:-original-fish}"
+PERSONA_FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --with-asr) WITH_ASR=1; shift ;;
+    --no-persona) WITH_PERSONA=0; shift ;;
+    --no-start) DO_START=0; shift ;;
+    --no-systemd) WITH_SYSTEMD=0; DO_START=0; shift ;;
+    --skip-apt) SKIP_APT=1; shift ;;
+    --force-config) FORCE_CONFIG=1; shift ;;
+    --persona-mode) PERSONA_MODE="${2:?缺少人格模式}"; shift 2 ;;
+    --persona) PERSONA_FILE="${2:?缺少人格文件}"; shift 2 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    *) die "未知参数：$1" ;;
   esac
 done
 
@@ -168,12 +175,12 @@ if [ "$WITH_PERSONA" = 1 ]; then
   if [ -s "${FISH_ROOT}/events.jsonl" ]; then
     warn "状态库已有事件流，跳过人格导入（不会覆盖正在成长的她）"
   else
-    log "导入初始绪山真寻人格"
-    "${NODE_BIN}/node" "${REPO_DIR}/scripts/import-persona.mjs" \
-      --pkg "$FISH_PKG" --root "$FISH_ROOT" \
-      --persona "${REPO_DIR}/persona/mahiro-handover.md" --yes
+    log "导入初始人格：${PERSONA_MODE}"
+    persona_args=(--pkg "$FISH_PKG" --root "$FISH_ROOT" --mode "$PERSONA_MODE" --yes)
+    [ -n "$PERSONA_FILE" ] && persona_args+=(--persona "$PERSONA_FILE")
+    "${NODE_BIN}/node" "${REPO_DIR}/scripts/import-persona.mjs" "${persona_args[@]}"
     chown -R "$FISH_USER:$FISH_USER" "$FISH_ROOT"
-    ok "初始人格已导入"
+    ok "初始人格已处理（${PERSONA_MODE}）"
   fi
 fi
 

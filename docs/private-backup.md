@@ -109,11 +109,18 @@ sudo bash scripts/verify-private.sh
 2. 确认 Git remote 指向私有仓库。
 3. 解出最新提交，按 manifest 校验每个文件的 SHA256 与大小。
 4. 校验所有 JSON/JSONL/zstd 可解析。
-5. 校验 seed 是绪山真寻、事件流可解析。
+5. 用 `scripts/persona-seed.mjs` 识别并校验实际 seed（`blank` / `original-fish` / `mahiro` / `custom`），不再要求名字里必须有绪山真寻。
 6. 校验 `home.json` 的当前会话文件存在、`workspace.json` 引用的会话齐全。
 7. 确认 `state.json` 不再包含 cookie。
 8. 确认没有 `owner.json`、`auth.json`、`.env` 等禁止文件。
 9. 确认公开仓库没有 `state/`、`manifests/` 或私人数据。
+
+需要显式确认人格类型时：
+
+```bash
+sudo bash scripts/verify-private.sh --expect-persona original-fish
+sudo bash scripts/verify-private.sh --commit <sha> --expect-persona mahiro
+```
 
 ## 恢复
 
@@ -127,10 +134,11 @@ sudo bash scripts/restore-private.sh --target /tmp/mahiro-restore-test
 它会把备份解到 `/tmp/mahiro-restore-test`，保持 `var/lib/fish/...` 结构，
 校验 manifest、SHA256、seed、会话，不会碰线上。
 
-也可以指定历史提交：
+也可以指定历史提交或期望人格：
 
 ```bash
 sudo bash scripts/restore-private.sh --commit <sha> --target /tmp/restore
+sudo bash scripts/restore-private.sh --commit <sha> --expect-persona mahiro --target /tmp/old-mahiro
 ```
 
 ### 覆盖线上

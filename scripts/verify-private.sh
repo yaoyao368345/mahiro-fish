@@ -15,12 +15,14 @@ export PATH="${NODE_BIN}:$PATH"
 PRIVATE_DIR="${PRIVATE_REPO_DIR:-/root/mahiro-fish-private-backup}"
 COMMIT="origin/${PRIVATE_BRANCH:-main}"
 MANIFEST=""
+EXPECT_PERSONA="${PERSONA_EXPECT:-auto}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo-dir) PRIVATE_DIR="${2:?缺少目录}"; shift 2 ;;
     --commit) COMMIT="${2:?缺少提交}"; shift 2 ;;
     --manifest) MANIFEST="${2:?缺少 manifest}"; shift 2 ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    --expect-persona) EXPECT_PERSONA="${2:?缺少人格类型}"; shift 2 ;;
+    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) die "未知参数：$1" ;;
   esac
 done
@@ -59,17 +61,17 @@ ok "manifest / SHA256 / 内容完整性通过"
 # seed 与事件流
 EV="$(find "$TMP/state" -path '*/.dsh-fish/events.jsonl' -print -quit)"
 [ -n "$EV" ] || die "备份里没有 events.jsonl"
+"${NODE_BIN}/node" "${REPO_DIR}/scripts/persona-seed.mjs" "$EV" --expect "$EXPECT_PERSONA" \
+  || die "备份里的 seed 不符合期望人格（${EXPECT_PERSONA}）"
 python3 - "$EV" <<'PY'
 import json, sys
-n = 0; seed = False; days = set()
+n = 0; days = set()
 for line in open(sys.argv[1], encoding='utf-8'):
     line = line.strip()
     if not line: continue
     e = json.loads(line); n += 1
     days.add(e.get('day'))
-    if e.get('type') == 'seed' and '绪山真寻' in str(e.get('text', '')): seed = True
-if not seed: raise SystemExit('没有绪山真寻 seed')
-print(f"  事件数 {n}；天数 {len(days)}；seed 通过")
+print(f"  事件数 {n}；天数 {len(days)}")
 PY
 
 # home.json 当前会话与 session 文件

@@ -1,6 +1,18 @@
 # 变更记录
 
-## 未发布 — 2026-11-14
+## 未发布 — 2026-11-15
+
+- 人格系统改为三种初始化模式：`blank`、`original-fish`（推荐默认）、`mahiro`（旧模板）。
+  - 新增 `persona/original-fish.md`：原创大肥鱼，没有原作背景和预设性格。
+  - 保留 `persona/mahiro-handover.md` 与旧实例的恢复能力。
+  - `scripts/import-persona.mjs` 支持 `--mode`，不再要求人格文件必须包含“绪山真寻”。
+- 备份/恢复校验改用 `scripts/persona-seed.mjs` 识别实际 seed 和 `import-mark`；
+  `verify-private.sh` / `restore-private.sh` 新增 `--expect-persona`，默认 `auto`。
+- 私有备份补上 Telegram 的 `avatar-outbox.json` 与 `tts-pending.json`。
+- README、部署文档、安全说明改为通用“大肥鱼养成系统”，旧真寻保留为可选模板。
+- 新增 `tests/persona.test.mjs`，覆盖空白、原创、旧真寻和期望不匹配。
+
+## 2026-11-14
 
 - B 站看画面额度（`video.perDay`）只约束她自己：定时醒着刷站、自己挑的
   那几条计数。主人发来的视频不占额度，也不受上限阻挡。

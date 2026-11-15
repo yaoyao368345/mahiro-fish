@@ -1,14 +1,22 @@
-# mahiro-fish · 真寻养成计划
+# mahiro-fish · 大肥鱼养成系统
 
-仓库：<https://github.com/yaoyao368345/mahiro-fish>
+仓库：<https://github.com/yaoyao368345/mahiro-fish>（仓库名保留，项目已不再只面向绪山真寻）
 
-把一只在 Debian 服务器上养大的「绪山真寻」整理成可以复现的开源部署：
-DSH + dsh-fish + DeepSeek 日常对话，Telegram 私聊，自主唤醒与主动留话，
-B 站浏览/抽帧/字幕，长期媒体记忆，ChatGPT 生图，以及语音收发。
+一套可复现的 Debian 服务器养成环境：DSH + dsh-fish + DeepSeek 日常对话，
+Telegram 私聊，自主唤醒与主动留话，B 站浏览/抽帧/字幕，长期媒体记忆，
+ChatGPT 生图，以及语音收发。
 
-> **非官方粉丝项目。** 角色原型来自《别当欧尼酱了！》（お兄ちゃんはおしまい！）。
-> 本项目是非官方的粉丝衍生实现，不代表原作官方授权，也不包含任何动画截图、
-> 配音素材、角色插画或原作长篇台词。初始人格文本见 [persona/](persona/)。
+默认人格是**原创大肥鱼**：没有原作背景、没有预设的固定性格和喜好，
+通过真实经历慢慢形成自己的兴趣、判断和习惯。仓库同时保留三种初始化方式：
+
+| 模式 | 说明 |
+| --- | --- |
+| `original-fish` | 原创大肥鱼，推荐默认 |
+| `blank` | dsh-fish 原生空白人格，只从“你刚开始存在”长起 |
+| `mahiro` | 旧绪山真寻模板，保留给已有实例和想复现旧档的人 |
+
+> 旧绪山真寻模板包含《别当欧尼酱了！》的同人设定，是非官方粉丝衍生内容，
+> 不代表原作官方授权。默认的新实例不会使用它，也不会继承旧实例的记忆。
 
 ---
 
@@ -18,7 +26,7 @@ B 站浏览/抽帧/字幕，长期媒体记忆，ChatGPT 生图，以及语音�
 
 | 能力 | 实现 |
 | --- | --- |
-| 角色人格 | dsh-fish 的 `seed` 事件，初始为绪山真寻 |
+| 角色人格 | dsh-fish 的 `seed` 事件；默认原创大肥鱼，可选空白或旧真寻模板 |
 | 日常对话 | DeepSeek（DSH provider） |
 | Telegram 私聊 | `telegram-bridge/`，长轮询 + `/dsh-fish/say` |
 | 主动留话 | dsh-fish `her_leave` → 桥的 outbox → Telegram |
@@ -115,7 +123,7 @@ Telegram 服务会在配置好 Token 后再启动。
 7. 安装 Telegram 桥到 `/home/fish/telegram-bridge`。
 8. 生成 `/etc/mahiro-fish/dsh.env` 与 `/home/fish/.telegram-bridge.env`（权限 600）。
 9. 创建默认 `~/.dsh-fish/config.json`。
-10. 在空状态库上导入初始绪山真寻人格。
+10. 在空状态库上导入初始人格（默认原创大肥鱼，可用 `--persona-mode` 切换）。
 11. 安装并启用 `dsh-web.service`、`dsh-telegram.service`。
 12. 可选安装本地 ASR。
 
@@ -222,39 +230,45 @@ ssh -L 3080:127.0.0.1:3080 user@your-server
 
 ---
 
-## 人格：从初始真寻开始
+## 人格：三种起点
 
-仓库里的 [persona/mahiro-handover.md](persona/mahiro-handover.md) 是 2026-11-14
-首次导入时使用的**原始交接单**，与事件流里的 `seed` 逐字一致。
+| 文件 / 模式 | 用途 |
+| --- | --- |
+| [persona/original-fish.md](persona/original-fish.md) · `original-fish` | 推荐默认。原创大肥鱼，没有固定性格和喜好，靠真实经历慢慢形成 |
+| `blank` | dsh-fish 原生空白人格；重置后不写 seed，由插件在首次启动时落下“你刚开始存在” |
+| [persona/mahiro-handover.md](persona/mahiro-handover.md) · `mahiro` | 旧绪山真寻模板，保留为可选模板和旧备份恢复入口 |
 
-它保留了：
-
-- 绪山真寻的名字、原作背景、与绪山美波里的关系
-- 游戏、动画、漫画、二次元等基础兴趣
-- 懒散、慢热、怕羞、嘴硬但温柔、有点好色的性格
-- 自然中文口语，不机械复读口癖和颜文字
-- “原作背景 ≠ 当前生活经历”的边界
-- 允许通过真实经历改变观点、形成新兴趣的成长方向
+三种模式都写入同一条 dsh-fish 事件流，不创建第二套记忆引擎。
 
 ### 原生导入
 
 **设置页（推荐）**：DSH Web → 设置 → 大肥鱼 → 接一只别人养过的大肥鱼，
-粘贴 `persona/mahiro-handover.md` 全文。
+粘贴选中的交接单全文。
 
 **命令行（全新实例）**：
 
 ```bash
 sudo systemctl stop dsh-web
-sudo node scripts/import-persona.mjs \
-  --pkg /home/fish/.dsh/profiles/web/node_modules/@ssamurias/dsh-fish \
-  --root /home/fish/.dsh-fish \
-  --persona persona/mahiro-handover.md
+
+# 推荐：原创大肥鱼
+sudo node scripts/import-persona.mjs --mode original-fish
+
+# 或者：dsh-fish 原生空白人格（启动时由插件播种）
+sudo node scripts/import-persona.mjs --mode blank
+
+# 或者：旧绪山真寻模板
+sudo node scripts/import-persona.mjs --mode mahiro
+
 sudo chown -R fish:fish /home/fish/.dsh-fish
 sudo systemctl start dsh-web
 ```
 
-已经有 `seed` 的实例会被拒绝导入；要重开一局必须显式 `--reset`
-（旧状态整体改名封存，不删除）。详见 [persona/README.md](persona/README.md)。
+已经有 `seed` 的实例会被拒绝导入；要重开一局必须显式 `--reset --yes`
+（旧状态整体改名封存，不删除）。备份和恢复脚本通过
+`scripts/persona-seed.mjs` 识别实际 seed 和 `import-mark`，不再要求
+seed 必须包含绪山真寻，因此旧真寻备份和新的原创人格备份都能恢复。
+详见 [persona/README.md](persona/README.md) 和
+[docs/private-backup.md](docs/private-backup.md)。
 
 ---
 
@@ -268,7 +282,8 @@ mahiro-fish/
 ├── .gitignore
 ├── .env.example
 ├── persona/
-│   ├── mahiro-handover.md      # 原始初始人格
+│   ├── original-fish.md        # 推荐默认：原创大肥鱼
+│   ├── mahiro-handover.md      # 可选：旧绪山真寻模板
 │   └── README.md
 ├── telegram-bridge/
 │   ├── bridge.mjs              # Telegram ↔ DSH / 语音 / 图片

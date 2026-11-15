@@ -49,12 +49,12 @@ fi
 
 echo
 echo "== 人格 =="
+PERSONA_EXPECT="${PERSONA_EXPECT:-auto}"
 if [ -s "${FISH_ROOT}/events.jsonl" ] && head -c 200000 "${FISH_ROOT}/events.jsonl" | grep -q '"type":"seed"'; then
-  pass "事件流里有 seed"
-  if head -c 200000 "${FISH_ROOT}/events.jsonl" | grep -q '绪山真寻'; then
-    pass "seed 是绪山真寻"
+  if "${NODE_BIN}/node" "${REPO_DIR}/scripts/persona-seed.mjs" "${FISH_ROOT}/events.jsonl" --expect "$PERSONA_EXPECT"; then
+    pass "seed 人格校验通过（期望 ${PERSONA_EXPECT}）"
   else
-    fail "seed 里没有找到绪山真寻"
+    fail "seed 人格不符合期望（${PERSONA_EXPECT}）"
   fi
 else
   fail "没有找到人格 seed（可能还没导入）"

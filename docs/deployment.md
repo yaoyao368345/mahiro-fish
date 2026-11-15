@@ -198,20 +198,26 @@ sudo systemctl enable --now dsh-telegram.service
 
 ## 9. 导入初始人格
 
-全新状态库：
+全新状态库可选三种模式：`original-fish`（默认）、`blank`、`mahiro`。
 
 ```bash
 sudo systemctl stop dsh-web
-sudo node scripts/import-persona.mjs \
-  --pkg /home/fish/.dsh/profiles/web/node_modules/@ssamurias/dsh-fish \
-  --root /home/fish/.dsh-fish \
-  --persona persona/mahiro-handover.md
+
+# 推荐：原创大肥鱼
+sudo node scripts/import-persona.mjs --mode original-fish
+
+# 或者：dsh-fish 原生空白人格
+sudo node scripts/import-persona.mjs --mode blank
+
+# 或者：旧绪山真寻模板
+sudo node scripts/import-persona.mjs --mode mahiro
+
 sudo chown -R fish:fish /home/fish/.dsh-fish
 sudo systemctl start dsh-web
 ```
 
 也可以完全走原生设置页：DSH Web → 设置 → 大肥鱼 → 接一只别人养过的大肥鱼，
-粘贴 `persona/mahiro-handover.md`。
+粘贴 `persona/original-fish.md`（或你选中的模板）。
 
 已经有 `seed` 的实例会被拒绝。要重开一局必须加 `--reset --yes`；
 它会先把旧状态整体改名到 `/home/fish/dsh-fish-backups/reset-<时间>/`。
@@ -230,7 +236,7 @@ sudo bash scripts/verify.sh
 - 7 个新增模块存在
 - 两个 systemd 服务 active
 - `127.0.0.1:3080` 可访问
-- 事件流里有绪山真寻的 seed
+- 事件流里有 seed，人格类型识别正确（默认 `original-fish`）
 - 敏感文件权限 600
 - 语法、测试、凭据扫描通过
 

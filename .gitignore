@@ -30,6 +30,8 @@ home.json
 state.json
 outbox.json
 image-outbox.json
+avatar-outbox.json
+tts-pending.json
 voice-prefs.json
 voice-usage.json
 tts-pending.json

@@ -1,19 +1,27 @@
-# mahiro-fish
+# mahiro-fish · Big Fish companion
 
-A reproducible, open-source deployment of the **Mahiro Oyama AI companion**:
+A reproducible, open-source deployment for an evolving AI companion:
 DSH + dsh-fish + DeepSeek for daily conversation, a Telegram private-chat
 bridge, autonomous check-ins, Bilibili browsing/frame capture/subtitles,
 long-term media memory, ChatGPT image generation, and voice in/out.
 
-> **Unofficial fan project.** The character is from *Onimai: I'm Now Your
-> Sister!* (お兄ちゃんはおしまい！). This project is not affiliated with or
-> endorsed by the original rights holders. It ships no anime screenshots,
-> voice clips, character art, or long excerpts from the source material.
+The default persona is an **original big fish** with no source-material
+backstory and no fixed likes or habits. It grows from real experience.
+Three starting points are supported:
+
+- `original-fish` — recommended default (`persona/original-fish.md`)
+- `blank` — dsh-fish's native blank persona
+- `mahiro` — the legacy Mahiro Oyama template (`persona/mahiro-handover.md`)
+
+> The optional Mahiro template is an unofficial fan work based on *Onimai:
+> I'm Now Your Sister!*. It is not affiliated with or endorsed by the original
+> rights holders. New installs do not use it and do not inherit old memories.
 
 ## What is inside
 
-- `persona/mahiro-handover.md` — the exact initial Mahiro persona used at
-  first import (the `seed` event), published as a template.
+- `persona/original-fish.md` — recommended default persona: open-ended,
+  short, and free of a fixed character script.
+- `persona/mahiro-handover.md` — the legacy Mahiro template, kept optional.
 - `telegram-bridge/` — Telegram long-polling bridge, proactive-letter outbox,
   image outbox, and autonomous-voice policy.
 - `dsh-fish/patches/` — a SHA256-verified patch for dsh-fish **0.9.9**,

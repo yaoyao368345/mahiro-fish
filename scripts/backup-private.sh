@@ -165,6 +165,8 @@ copy_file "$FISH_ROOT/media/index.json"
 copy_state_sanitized "$FISH_HOME/.telegram-bridge/state.json"
 copy_file "$FISH_HOME/.telegram-bridge/outbox.json"
 copy_file "$FISH_HOME/.telegram-bridge/image-outbox.json"
+copy_file "$FISH_HOME/.telegram-bridge/avatar-outbox.json"
+copy_file "$FISH_HOME/.telegram-bridge/tts-pending.json"
 copy_file "$FISH_HOME/.telegram-bridge/voice-prefs.json"
 copy_file "$FISH_HOME/.telegram-bridge/voice-usage.json"
 
