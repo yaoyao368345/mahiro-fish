@@ -5,7 +5,7 @@
 
 ## 内容
 
-`dsh-fish-0.9.9-m2.4-m2.12.patch` 是累积补丁，包含 M2.4–M2.12.4 的全部改动：
+`dsh-fish-0.9.9-m2.4-m2.12.patch` 是累积补丁，包含 M2.4–M2.12.4 与 M3.4 的全部改动：
 
 - **M2.4 主动生活增强**
   - `proactive.js`：真实 B 站 `watched` / `looked` 进入主动材料与“劲儿”
@@ -20,13 +20,16 @@
   - `sub.js`（新）：从 1.0.0 移植的 `bili_sub`，按句给、可翻页
 - **M2.10 生图**
   - `draw.js`（新）：`her_draw`，复用 `image_generate`，每天 2 张
+- **M3.4 自主记忆语义**
+  - `capture.js` / `persona.js`：`growth_commit` 明确为“她自己的记忆”，不需要询问批准，也不强制每次记录。
+  - `ask.js` / `persona.js`：收窄 `ask_owner` 到真正需要外部授权、资源或配合的事；记忆、兴趣、看法、日记和观看感受不走审批。
 - **M2.12 语音**
   - `voice.js`（新）：`her_voice`，只写内存请求
   - `say.js` / `observe.js`：`voice:true`、`voiceRequested`、当轮提示
   - `persona.js`：Telegram 语音回复能力说明
   - `restrict.js`：工具面加入 `her_voice`
 
-补丁后的 23 个文件校验和见 `CHECKSUMS.sha256`。
+补丁后的 25 个文件校验和见 `CHECKSUMS.sha256`。
 
 ## 应用
 

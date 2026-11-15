@@ -54,8 +54,9 @@ test('patch is pinned to dsh-fish 0.9.9 and adds the expected modules', () => {
 test('watch quota applies only to her own picks, not owner-shared videos', () => {
   const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
   const start = patch.indexOf('--- a/lib/watch.js')
-  const end = patch.indexOf('--- /dev/null')
-  assert.ok(start > 0 && end > start, 'watch.js hunk missing')
+  const next = patch.indexOf('\n--- ', start + 1)
+  const end = next > start ? next : patch.length
+  assert.ok(start > 0, 'watch.js hunk missing')
   const watch = patch.slice(start, end)
   assert.ok(watch.includes("import { inWake } from './wakewin.js'"))
   assert.ok(watch.includes('const selfWatch = inWake()'))
@@ -96,6 +97,36 @@ test('her_draw can set her own avatar twice a day', () => {
   const selfAvatar = read('dsh-fish/modules/selfavatar.js')
   assert.ok(selfAvatar.includes('her_avatar'))
   assert.ok(selfAvatar.includes('latestDrawing'))
+})
+
+test('growth_commit is her own memory, not an approval request', () => {
+  const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
+  assert.ok(patch.includes('+++ b/lib/capture.js'), 'patch must touch capture.js')
+  assert.ok(patch.includes('+++ b/lib/ask.js'), 'patch must touch ask.js')
+  for (const needle of [
+    '这是你自己的记忆',
+    '不需要询问任何人是否允许你记住',
+    '也不需要每次都记',
+    '不想留下就不写',
+  ]) {
+    assert.ok(patch.includes(needle), `growth_commit semantics missing: ${needle}`)
+  }
+})
+
+test('ask_owner is narrowed to external authorization and resources', () => {
+  const patch = read('dsh-fish/patches/dsh-fish-0.9.9-m2.4-m2.12.patch')
+  for (const needle of [
+    '只用在需要他授权、提供资源或实际配合的事上',
+    '新增权限或工具',
+    '不要用它问要不要记住',
+    '要不要形成兴趣或改变看法',
+    '要不要写日记',
+    '对看到的东西有什么感受',
+  ]) {
+    assert.ok(patch.includes(needle), `ask_owner scope missing: ${needle}`)
+  }
+  const added = patch.split('\n').filter((line) => line.startsWith('+')).join('\n')
+  assert.ok(!added.includes('或者拿不准一件事要不要做'), 'old broad ask_owner wording must be gone')
 })
 
 test('systemd templates do not hardcode a real user or host', () => {
