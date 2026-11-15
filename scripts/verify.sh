@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # 安装后自检。可重复执行；不会修改线上数据。
 set -uo pipefail
+if [ -z "${FISH_HOME:-}" ] && [ -d /var/lib/fish ] && [ ! -d /home/fish ]; then
+  export FISH_HOME=/var/lib/fish
+fi
 source "$(dirname "$0")/lib.sh"
 export PATH="${NODE_BIN}:$PATH"
 

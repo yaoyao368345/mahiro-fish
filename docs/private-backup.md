@@ -179,6 +179,27 @@ sudo bash scripts/restore-private.sh --apply --yes
 - 未发现 API Key、Bot Token、OAuth、B 站 Cookie
 - 公开仓库没有私人备份内容
 
+2026-11-15 旧真寻最终备份（重置前，服务已暂停）：
+
+- 备份 ID：`20261115-171023`
+- 提交：`06426758b31240734b38cc62801aa84dc16f8e77`
+- 永久恢复 Tag：`mahiro-final-20261115-r2`
+- 30 个文件，1,184,904 字节
+- 重新 clone 后 manifest/SHA256 全部通过
+- 事件流 120 条，seed 为绪山真寻（旧 `import-mark` 仍被识别）
+- 7 个会话文件、`home.json` 当前会话、workspace 引用齐全
+- 隔离恢复演练通过；旧真寻可以恢复
+
+2026-11-15 新原创大肥鱼首次备份：
+
+- 备份 ID：`20261115-171334`
+- 提交：`46e7486f8cfcf32494c9459ce04324eaa9eb826a`
+- 起始 Tag：`original-fish-20261115-start`
+- 27 个文件，1,177,439 字节
+- seed 为 `original-fish`，事件流只有新实例的 12 条事件
+- `home.json` 指向新会话，旧真寻会话已归档、不再作为当前会话
+- 隔离恢复演练通过
+
 ## 限制
 
 - 媒体图片本体不备份；`media/index.json` 会保留，但恢复后图片可能显示为

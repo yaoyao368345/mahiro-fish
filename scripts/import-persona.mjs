@@ -83,6 +83,10 @@ if (!pkg) {
   console.error('缺少 --pkg（dsh-fish 安装目录），或设置 DSH_FISH_PKG。')
   process.exit(2)
 }
+if (mode === 'custom' && !personaPath) {
+  console.error('--mode custom 需要同时给 --persona <交接单路径>。')
+  process.exit(2)
+}
 if (!fs.existsSync(path.join(pkg, 'lib/import.js'))) {
   console.error(`不是有效的 dsh-fish 目录：${pkg}`)
   process.exit(2)
